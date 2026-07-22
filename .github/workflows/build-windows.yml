@@ -57,8 +57,11 @@ jobs:
       - name: Restore
         run: dotnet restore Erasa.Video.sln
 
+      - name: Build solution
+        run: dotnet build Erasa.Video.sln -c Release --no-restore
+
       - name: Test .NET
-        run: dotnet test tests/Erasa.Video.Tests/Erasa.Video.Tests.csproj -c Release --no-restore --logger "trx;LogFileName=erasa-tests.trx" --results-directory TestResults
+        run: dotnet test tests/Erasa.Video.Tests/Erasa.Video.Tests.csproj -c Release --no-build --logger "trx;LogFileName=erasa-tests.trx" --results-directory TestResults
 
       - name: Install worker test dependencies
         run: python -m pip install numpy==1.26.4 opencv-python-headless==4.10.0.84 PyYAML==6.0.2

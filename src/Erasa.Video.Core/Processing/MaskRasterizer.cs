@@ -68,8 +68,8 @@ public static class MaskRasterizer
         {
             var distance = Math.Sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy));
             if (distance > radius) continue;
-            var value = distance <= inner || radius <= inner
-                ? 255
+            byte value = distance <= inner || radius <= inner
+                ? byte.MaxValue
                 : (byte)Math.Clamp(Math.Round(255 * (radius - distance) / Math.Max(radius - inner, 1e-6)), 0, 255);
             Apply(alpha, y * width + x, value, erase);
         }

@@ -93,7 +93,11 @@ def main() -> int:
     csharp_files = sorted(ROOT.rglob("*.cs"))
     for path in csharp_files:
         check_csharp_braces(path)
+        source = path.read_text(encoding="utf-8")
+        if re.search(r"\?\s*255\s*\n\s*:\s*\(byte\)", source):
+            raise AssertionError(f"Mixed int/byte conditional expression in {path}")
     result["csharp_brace_files"] = len(csharp_files)
+    result["csharp_numeric_type_guard"] = True
 
     main_window = (ROOT / "src" / "Erasa.Video.App" / "MainWindow.axaml.cs").read_text(encoding="utf-8")
     for token in ("Editor.PanDelta", "Editor.SetZoom(_zoom)", 'AppLog.WriteAsync("ProcessItem"'):
