@@ -48,8 +48,8 @@ public sealed class TemporalReconstructor
     {
         using var telea = new Mat();
         using var navierStokes = new Mat();
-        Cv2.Inpaint(frame, mask, telea, 3, InpaintMethod.Telea);
-        Cv2.Inpaint(frame, mask, navierStokes, 3, InpaintMethod.NS);
+        Cv2.Inpaint(frame, mask, telea, 3, InpaintTypes.Telea);
+        Cv2.Inpaint(frame, mask, navierStokes, 3, InpaintTypes.NS);
         var blended = new Mat();
         Cv2.AddWeighted(telea, 0.58, navierStokes, 0.42, 0, blended);
         return blended;

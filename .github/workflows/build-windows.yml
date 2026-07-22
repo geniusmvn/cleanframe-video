@@ -58,7 +58,7 @@ jobs:
           $source = (Get-ChildItem src,tests -Recurse -File | ForEach-Object { Get-Content $_.FullName -Raw }) -join "`n"
           if ($source -match 'PySide6|PyInstaller|delogo=') { throw 'Legacy or banned implementation token found.' }
           if ($source -notmatch 'CalcOpticalFlowFarneback') { throw 'Optical flow implementation missing.' }
-          if ($source -notmatch 'InpaintMethod.Telea' -or $source -notmatch 'InpaintMethod.NS') { throw 'Spatial fallbacks missing.' }
+          if ($source -notmatch 'InpaintTypes.Telea' -or $source -notmatch 'InpaintTypes.NS') { throw 'Spatial fallbacks missing.' }
 
       - name: Restore
         run: dotnet restore CleanFrame.Video2.sln -p:Platform=x64
