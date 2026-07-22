@@ -5,10 +5,19 @@ import cv2
 import numpy as np
 import torch
 
+def configure_stdio() -> None:
+    # Windows can default to a legacy code page. Force worker IPC and errors to UTF-8.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="backslashreplace")
+
+configure_stdio()
+
 ACTIVE: list[subprocess.Popen] = []
 
 def emit(kind: str, progress: float | None = None, message: str | None = None, output: str | None = None):
-    print(json.dumps({"kind": kind, "progress": progress, "message": message, "output": output}, ensure_ascii=False), flush=True)
+    print(json.dumps({"kind": kind, "progress": progress, "message": message, "output": output}, ensure_ascii=True), flush=True)
 
 def app_root() -> Path:
     return Path(__file__).resolve().parent.parent

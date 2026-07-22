@@ -85,7 +85,7 @@ jobs:
         shell: pwsh
         run: |
           Push-Location artifacts/app
-          & '.\tools\python\python.exe' -I '.\worker\main.py' selftest --device cpu | Tee-Object -FilePath '..\worker-self-test.jsonl'
+          & '.\tools\python\python.exe' -X utf8 -I '.\worker\main.py' selftest --device cpu | Tee-Object -FilePath '..\worker-self-test.jsonl'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Pop-Location
 

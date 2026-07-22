@@ -25,6 +25,8 @@ public sealed class WorkerRunner
             CreateNoWindow = true,
             WorkingDirectory = AppContext.BaseDirectory
         };
+        psi.ArgumentList.Add("-X");
+        psi.ArgumentList.Add("utf8");
         psi.ArgumentList.Add("-I");
         psi.ArgumentList.Add(worker);
         foreach (var arg in arguments) psi.ArgumentList.Add(arg);
