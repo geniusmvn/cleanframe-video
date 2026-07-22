@@ -1,0 +1,128 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:LaMaStudio.App.Controls"
+        x:Class="LaMaStudio.App.MainWindow"
+        Title="LaMa Studio" Width="1320" Height="820" MinWidth="980" MinHeight="660"
+        Background="#0B0D12">
+  <Window.Styles>
+    <Style Selector="Button">
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="Padding" Value="14,9" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="Button.tool">
+      <Setter Property="Width" Value="52" />
+      <Setter Property="Height" Value="52" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="Background" Value="#171A22" />
+    </Style>
+    <Style Selector="Button.primary">
+      <Setter Property="Background" Value="#6D5CE7" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="Padding" Value="20,11" />
+    </Style>
+    <Style Selector="Border.panel">
+      <Setter Property="Background" Value="#12151C" />
+      <Setter Property="CornerRadius" Value="14" />
+      <Setter Property="BorderBrush" Value="#252A35" />
+      <Setter Property="BorderThickness" Value="1" />
+    </Style>
+  </Window.Styles>
+
+  <Grid RowDefinitions="72,*,74">
+    <Border Grid.Row="0" Background="#0F1218" BorderBrush="#222733" BorderThickness="0,0,0,1" Padding="22,0">
+      <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
+        <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+          <Border Width="38" Height="38" CornerRadius="10" Background="#6D5CE7">
+            <TextBlock Text="L" FontSize="20" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+          <StackPanel Spacing="1">
+            <TextBlock Text="LaMa Studio" FontSize="20" FontWeight="SemiBold" />
+            <TextBlock Text="Xoá vật thể khỏi ảnh và video bằng mask thủ công" Foreground="#8991A3" FontSize="12" />
+          </StackPanel>
+        </StackPanel>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10">
+          <Button Content="Mở ảnh / video" Click="Open_Click" />
+          <Button Content="Mở thư mục kết quả" Click="OpenOutputFolder_Click" />
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Grid Grid.Row="1" ColumnDefinitions="72,*,270" Margin="14" ColumnSpacing="12">
+      <Border Classes="panel" Padding="9">
+        <StackPanel Spacing="8" HorizontalAlignment="Center">
+          <Button x:Name="BrushButton" Classes="tool" Content="Cọ" Click="Brush_Click" Background="#6D5CE7" />
+          <Button x:Name="EraserButton" Classes="tool" Content="Tẩy" Click="Eraser_Click" />
+          <Button x:Name="RectButton" Classes="tool" Content="Khung" Click="Rect_Click" />
+          <Border Height="1" Width="38" Background="#2A303C" Margin="0,4" />
+          <Button Classes="tool" Content="↶" Click="Undo_Click" ToolTip.Tip="Hoàn tác" />
+          <Button Classes="tool" Content="↷" Click="Redo_Click" ToolTip.Tip="Làm lại" />
+          <Button Classes="tool" Content="Xoá" Click="Reset_Click" />
+        </StackPanel>
+      </Border>
+
+      <Border Grid.Column="1" Classes="panel" Background="#06080C" Padding="10">
+        <Grid RowDefinitions="Auto,*">
+          <Grid ColumnDefinitions="*,Auto" Margin="6,2,6,10">
+            <TextBlock x:Name="FileNameText" Text="Chưa mở file" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+              <Button Content="Gốc" Click="ShowOriginal_Click" Padding="10,5" />
+              <Button x:Name="ShowResultButton" Content="Kết quả" Click="ShowResult_Click" Padding="10,5" IsEnabled="False" />
+            </StackPanel>
+          </Grid>
+          <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+            <Border Background="#050609" HorizontalAlignment="Center" VerticalAlignment="Center">
+              <controls:MaskEditor x:Name="Editor" Width="960" Height="540" />
+            </Border>
+          </ScrollViewer>
+        </Grid>
+      </Border>
+
+      <Border Grid.Column="2" Classes="panel" Padding="18">
+        <StackPanel Spacing="16">
+          <StackPanel Spacing="5">
+            <TextBlock Text="Thiết lập" FontSize="18" FontWeight="SemiBold" />
+            <TextBlock Text="LaMa chỉ sửa vùng màu xanh trên canvas." Foreground="#8991A3" FontSize="12" TextWrapping="Wrap" />
+          </StackPanel>
+          <StackPanel Spacing="7">
+            <TextBlock Text="Thiết bị" Foreground="#B9C0CF" />
+            <ComboBox x:Name="DeviceCombo" SelectedIndex="0">
+              <ComboBoxItem Content="Tự động" Tag="auto" />
+              <ComboBoxItem Content="NVIDIA GPU" Tag="cuda" />
+              <ComboBoxItem Content="CPU" Tag="cpu" />
+            </ComboBox>
+          </StackPanel>
+          <StackPanel Spacing="7">
+            <Grid ColumnDefinitions="*,Auto"><TextBlock Text="Cỡ cọ" /><TextBlock Grid.Column="1" x:Name="BrushValueText" Text="32 px" Foreground="#8991A3" /></Grid>
+            <Slider x:Name="BrushSlider" Minimum="4" Maximum="180" Value="32" ValueChanged="BrushSlider_Changed" />
+          </StackPanel>
+          <StackPanel Spacing="7">
+            <Grid ColumnDefinitions="*,Auto"><TextBlock Text="Thu phóng" /><TextBlock Grid.Column="1" x:Name="ZoomValueText" Text="100%" Foreground="#8991A3" /></Grid>
+            <Slider x:Name="ZoomSlider" Minimum="50" Maximum="300" Value="100" ValueChanged="ZoomSlider_Changed" />
+          </StackPanel>
+          <Border Height="1" Background="#2A303C" />
+          <StackPanel Spacing="7">
+            <TextBlock Text="Video" Foreground="#B9C0CF" />
+            <TextBlock Text="Preview dài 3 giây. Bản đầy đủ giữ fps, độ phân giải và mã hoá lại audio AAC." Foreground="#8991A3" FontSize="12" TextWrapping="Wrap" />
+          </StackPanel>
+          <Border Background="#171B24" CornerRadius="9" Padding="12">
+            <StackPanel Spacing="5">
+              <TextBlock x:Name="StatusText" Text="Sẵn sàng" TextWrapping="Wrap" />
+              <ProgressBar x:Name="ProgressBar" Minimum="0" Maximum="100" Value="0" Height="5" />
+            </StackPanel>
+          </Border>
+        </StackPanel>
+      </Border>
+    </Grid>
+
+    <Border Grid.Row="2" Background="#0F1218" BorderBrush="#222733" BorderThickness="0,1,0,0" Padding="18,0">
+      <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="10" VerticalAlignment="Center">
+        <TextBlock Text="Vẽ mask → Preview → Xuất" Foreground="#8991A3" VerticalAlignment="Center" />
+        <Button Grid.Column="1" Content="Huỷ" Click="Cancel_Click" />
+        <Button Grid.Column="2" Content="Preview" Click="Preview_Click" />
+        <Button Grid.Column="3" Classes="primary" Content="Xuất kết quả" Click="Export_Click" />
+      </Grid>
+    </Border>
+  </Grid>
+</Window>

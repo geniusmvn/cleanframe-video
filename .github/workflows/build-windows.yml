@@ -3,7 +3,6 @@ name: Build Windows
 on:
   push:
     branches: [ main ]
-  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -11,13 +10,13 @@ permissions:
 
 jobs:
   build:
-    # Pin the established VS2022 image instead of the moving windows-latest/VS2026 image.
     runs-on: windows-2022
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       DOTNET_NOLOGO: true
       DOTNET_CLI_TELEMETRY_OPTOUT: true
-      CLEANFRAME_FFMPEG_DIR: ${{ github.workspace }}\third_party\ffmpeg\bin
+      MODEL_URL: https://github.com/Sanster/models/releases/download/add_big_lama/big-lama.pt
+      MODEL_MD5: e3aa4aaa15225a33ec84f9f4bc47e500
 
     steps:
       - name: Checkout
@@ -26,10 +25,12 @@ jobs:
       - name: Setup .NET 8
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 8.0.423
+          dotnet-version: 8.0.x
 
-      - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v2
+      - name: Setup Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
 
       - name: Download FFmpeg
         shell: pwsh
@@ -40,93 +41,68 @@ jobs:
           Invoke-WebRequest 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip' -OutFile $zip
           Expand-Archive $zip -DestinationPath $expanded -Force
           $bin = Get-ChildItem $expanded -Directory | Select-Object -First 1 | ForEach-Object { Join-Path $_.FullName 'bin' }
-          New-Item -ItemType Directory -Force 'third_party\ffmpeg\bin' | Out-Null
-          Copy-Item (Join-Path $bin 'ffmpeg.exe') 'third_party\ffmpeg\bin\ffmpeg.exe'
-          Copy-Item (Join-Path $bin 'ffprobe.exe') 'third_party\ffmpeg\bin\ffprobe.exe'
-          & 'third_party\ffmpeg\bin\ffmpeg.exe' -version
+          New-Item -ItemType Directory -Force 'artifacts\runtime\tools\ffmpeg\bin' | Out-Null
+          Copy-Item (Join-Path $bin 'ffmpeg.exe') 'artifacts\runtime\tools\ffmpeg\bin\ffmpeg.exe'
+          Copy-Item (Join-Path $bin 'ffprobe.exe') 'artifacts\runtime\tools\ffmpeg\bin\ffprobe.exe'
 
-      - name: Verify source layout
+      - name: Install bundled worker runtime
         shell: pwsh
         run: |
-          $required = @(
-            'CleanFrame.Video2.sln',
-            'src\CleanFrame.Video2.App\CleanFrame.Video2.App.csproj',
-            'src\CleanFrame.Video2.Worker\CleanFrame.Video2.Worker.csproj',
-            'src\CleanFrame.Video2.Engine\Processing\TemporalReconstructor.cs',
-            'src\CleanFrame.Video2.Engine\Detection\StaticOverlayDetector.cs',
-            'tests\CleanFrame.Video2.Tests\TemporalPipelineMaskTests.cs'
-          )
-          foreach ($path in $required) {
-            if (-not (Test-Path $path -PathType Leaf)) { throw "Missing required file: $path" }
-          }
-          $source = (Get-ChildItem src,tests -Recurse -File | ForEach-Object { Get-Content $_.FullName -Raw }) -join "`n"
-          if ($source -match 'PySide6|PyInstaller|delogo=') { throw 'Legacy or banned implementation token found.' }
-          if ($source -notmatch 'CalcOpticalFlowFarneback') { throw 'Optical flow implementation missing.' }
-          if ($source -notmatch 'InpaintTypes.Telea' -or $source -notmatch 'InpaintTypes.NS') { throw 'Spatial fallbacks missing.' }
+          python -m pip install --upgrade pip
+          python -m pip install torch==2.1.2+cu118 --index-url https://download.pytorch.org/whl/cu118
+          python -m pip install -r worker/requirements.txt
+          New-Item -ItemType Directory -Force 'artifacts\runtime\tools\python' | Out-Null
+          Copy-Item "$env:pythonLocation\*" 'artifacts\runtime\tools\python' -Recurse -Force
+          New-Item -ItemType Directory -Force 'artifacts\runtime\worker' | Out-Null
+          Copy-Item 'worker\main.py' 'artifacts\runtime\worker\main.py'
+
+      - name: Download and verify LaMa model
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force 'artifacts\runtime\models' | Out-Null
+          Invoke-WebRequest $env:MODEL_URL -OutFile 'artifacts\runtime\models\big-lama.pt'
+          $actual = (Get-FileHash 'artifacts\runtime\models\big-lama.pt' -Algorithm MD5).Hash.ToLowerInvariant()
+          if ($actual -ne $env:MODEL_MD5) { throw "Model checksum mismatch: $actual" }
 
       - name: Restore
-        run: dotnet restore CleanFrame.Video2.sln -p:Platform=x64
+        run: dotnet restore LaMaStudio.sln
 
-      - name: Run tests
-        run: dotnet test tests/CleanFrame.Video2.Tests/CleanFrame.Video2.Tests.csproj -c Release -p:Platform=x64 --no-restore --logger "trx;LogFileName=cleanframe-tests.trx" --results-directory TestResults
+      - name: Test
+        run: dotnet test tests/LaMaStudio.Tests/LaMaStudio.Tests.csproj -c Release --no-restore --logger "trx;LogFileName=lamastudio-tests.trx" --results-directory TestResults
 
-      - name: Publish worker
-        run: dotnet publish src/CleanFrame.Video2.Worker/CleanFrame.Video2.Worker.csproj -c Release -p:Platform=x64 -r win-x64 --self-contained true --no-restore -o artifacts/worker
+      - name: Publish desktop app
+        run: dotnet publish src/LaMaStudio.App/LaMaStudio.App.csproj -c Release -r win-x64 --self-contained true --no-restore -o artifacts/app
 
-      - name: Worker self-test
+      - name: Assemble artifact
         shell: pwsh
         run: |
-          & 'artifacts\worker\CleanFrame.Video2.Worker.exe' --self-test | Tee-Object -FilePath 'artifacts\worker-self-test.json'
+          Copy-Item 'artifacts\runtime\*' 'artifacts\app' -Recurse -Force
+          Copy-Item 'README_VI.md' 'artifacts\app\README_VI.md'
+          Copy-Item 'THIRD_PARTY_NOTICES.md' 'artifacts\app\THIRD_PARTY_NOTICES.md'
+          Copy-Item 'licenses' 'artifacts\app\licenses' -Recurse -Force
+
+      - name: LaMa CPU self-test
+        shell: pwsh
+        run: |
+          Push-Location artifacts/app
+          & '.\tools\python\python.exe' -I '.\worker\main.py' selftest --device cpu | Tee-Object -FilePath '..\worker-self-test.jsonl'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Pop-Location
 
-      - name: Publish WinUI app
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          New-Item -ItemType Directory -Force 'artifacts' | Out-Null
-          $publishDir = Join-Path $env:GITHUB_WORKSPACE 'artifacts\app'
-          msbuild 'src\CleanFrame.Video2.App\CleanFrame.Video2.App.csproj' `
-            /t:Publish `
-            /p:Configuration=Release `
-            /p:Platform=x64 `
-            /p:RuntimeIdentifier=win-x64 `
-            /p:SelfContained=true `
-            /p:WindowsAppSDKSelfContained=true `
-            /p:PublishReadyToRun=false `
-            "/p:PublishDir=$publishDir" `
-            /bl:artifacts\winui-publish.binlog `
-            /fl `
-            "/flp:logfile=artifacts\winui-publish.log;verbosity=diagnostic"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Assemble portable artifact
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force 'artifacts\app\worker' | Out-Null
-          New-Item -ItemType Directory -Force 'artifacts\app\tools\ffmpeg\bin' | Out-Null
-          Copy-Item 'artifacts\worker\*' 'artifacts\app\worker' -Recurse -Force
-          Copy-Item 'third_party\ffmpeg\bin\ffmpeg.exe' 'artifacts\app\tools\ffmpeg\bin\ffmpeg.exe'
-          Copy-Item 'third_party\ffmpeg\bin\ffprobe.exe' 'artifacts\app\tools\ffmpeg\bin\ffprobe.exe'
-          Copy-Item 'docs\THIRD_PARTY_NOTICES.md' 'artifacts\app\THIRD_PARTY_NOTICES.md'
-          Copy-Item 'README.md' 'artifacts\app\README.md'
-          Get-ChildItem 'artifacts\app' -Recurse | Select-Object FullName, Length | Out-File 'artifacts\artifact-file-list.txt'
-
-      - name: Upload diagnostic and test logs
+      - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: CleanFrameVideo2-TestResults
+          name: LaMaStudio-TestResults
           path: |
             TestResults
-            artifacts/worker-self-test.json
-            artifacts/winui-publish.log
-            artifacts/winui-publish.binlog
+            artifacts/worker-self-test.jsonl
           if-no-files-found: warn
 
       - name: Upload Windows app
         uses: actions/upload-artifact@v4
         with:
-          name: CleanFrameVideo2-Windows-x64
+          name: LaMaStudio-Windows-x64
           path: artifacts/app
           if-no-files-found: error
           retention-days: 14

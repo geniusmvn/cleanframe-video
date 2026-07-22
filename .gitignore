@@ -8,5 +8,6 @@ TestResults/
 *.log
 *.tmp
 *.temp
-third_party/ffmpeg/bin/*.exe
-!third_party/ffmpeg/bin/.gitkeep
+models/*.pt
+tools/
+!tools/.gitkeep
