@@ -71,7 +71,7 @@ jobs:
         run: dotnet test tests/LaMaStudio.Tests/LaMaStudio.Tests.csproj -c Release --no-restore --logger "trx;LogFileName=lamastudio-tests.trx" --results-directory TestResults
 
       - name: Publish desktop app
-        run: dotnet publish src/LaMaStudio.App/LaMaStudio.App.csproj -c Release -r win-x64 --self-contained true --no-restore -o artifacts/app
+        run: dotnet publish src/LaMaStudio.App/LaMaStudio.App.csproj -c Release -r win-x64 --self-contained true -o artifacts/app
 
       - name: Assemble artifact
         shell: pwsh
