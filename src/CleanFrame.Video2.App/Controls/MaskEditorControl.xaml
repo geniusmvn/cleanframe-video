@@ -1,0 +1,15 @@
+<UserControl
+    x:Class="CleanFrame.Video2.App.Controls.MaskEditorControl"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Background="Transparent"
+          PointerPressed="OnPointerPressed"
+          PointerMoved="OnPointerMoved"
+          PointerReleased="OnPointerReleased"
+          PointerCanceled="OnPointerCanceled">
+        <Image x:Name="MaskImage" Stretch="Uniform" IsHitTestVisible="False" />
+        <Border x:Name="HoverRing" Width="24" Height="24" CornerRadius="12"
+                BorderThickness="1" BorderBrush="White" Background="#30FF2D55"
+                Visibility="Collapsed" IsHitTestVisible="False" />
+    </Grid>
+</UserControl>

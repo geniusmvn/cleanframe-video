@@ -1,9 +1,10 @@
 name: Build Windows
 
 on:
-  workflow_dispatch:
   push:
-    branches: [main]
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -11,62 +12,98 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+      CLEANFRAME_FFMPEG_DIR: ${{ github.workspace }}\third_party\ffmpeg\bin
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
         with:
-          python-version: "3.11"
-          cache: pip
+          dotnet-version: 8.0.423
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-          python -m pip install pytest
-
-      - name: Download and verify LaMa ONNX
+      - name: Download FFmpeg
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force models | Out-Null
-          $url = "https://huggingface.co/Carve/LaMa-ONNX/resolve/main/lama_fp32.onnx?download=true"
-          Invoke-WebRequest -Uri $url -OutFile "models/lama_fp32.onnx"
-          $hash = (Get-FileHash "models/lama_fp32.onnx" -Algorithm SHA256).Hash.ToLower()
-          $expected = "1faef5301d78db7dda502fe59966957ec4b79dd64e16f03ed96913c7a4eb68d6"
-          if ($hash -ne $expected) { throw "LaMa checksum mismatch: $hash" }
+          $ErrorActionPreference = 'Stop'
+          $zip = Join-Path $env:RUNNER_TEMP 'ffmpeg.zip'
+          $expanded = Join-Path $env:RUNNER_TEMP 'ffmpeg'
+          Invoke-WebRequest 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip' -OutFile $zip
+          Expand-Archive $zip -DestinationPath $expanded -Force
+          $bin = Get-ChildItem $expanded -Directory | Select-Object -First 1 | ForEach-Object { Join-Path $_.FullName 'bin' }
+          New-Item -ItemType Directory -Force 'third_party\ffmpeg\bin' | Out-Null
+          Copy-Item (Join-Path $bin 'ffmpeg.exe') 'third_party\ffmpeg\bin\ffmpeg.exe'
+          Copy-Item (Join-Path $bin 'ffprobe.exe') 'third_party\ffmpeg\bin\ffprobe.exe'
+          & 'third_party\ffmpeg\bin\ffmpeg.exe' -version
+
+      - name: Verify source layout
+        shell: pwsh
+        run: |
+          $required = @(
+            'CleanFrame.Video2.sln',
+            'src\CleanFrame.Video2.App\CleanFrame.Video2.App.csproj',
+            'src\CleanFrame.Video2.Worker\CleanFrame.Video2.Worker.csproj',
+            'src\CleanFrame.Video2.Engine\Processing\TemporalReconstructor.cs',
+            'src\CleanFrame.Video2.Engine\Detection\StaticOverlayDetector.cs',
+            'tests\CleanFrame.Video2.Tests\TemporalPipelineMaskTests.cs'
+          )
+          foreach ($path in $required) {
+            if (-not (Test-Path $path -PathType Leaf)) { throw "Missing required file: $path" }
+          }
+          $source = (Get-ChildItem src,tests -Recurse -File | ForEach-Object { Get-Content $_.FullName -Raw }) -join "`n"
+          if ($source -match 'PySide6|PyInstaller|delogo=') { throw 'Legacy or banned implementation token found.' }
+          if ($source -notmatch 'CalcOpticalFlowFarneback') { throw 'Optical flow implementation missing.' }
+          if ($source -notmatch 'InpaintMethod.Telea' -or $source -notmatch 'InpaintMethod.NS') { throw 'Spatial fallbacks missing.' }
+
+      - name: Restore
+        run: dotnet restore CleanFrame.Video2.sln -p:Platform=x64
 
       - name: Run tests
+        run: dotnet test tests/CleanFrame.Video2.Tests/CleanFrame.Video2.Tests.csproj -c Release -p:Platform=x64 --no-restore --logger "trx;LogFileName=cleanframe-tests.trx" --results-directory TestResults
+
+      - name: Publish worker
+        run: dotnet publish src/CleanFrame.Video2.Worker/CleanFrame.Video2.Worker.csproj -c Release -p:Platform=x64 -r win-x64 --self-contained true --no-restore -o artifacts/worker
+
+      - name: Worker self-test
         shell: pwsh
         run: |
-          $env:PYTHONPATH = "${{ github.workspace }}"
-          python -m pytest -q
+          & 'artifacts\worker\CleanFrame.Video2.Worker.exe' --self-test | Tee-Object -FilePath 'artifacts\worker-self-test.json'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Build app
-        run: python -m PyInstaller --noconfirm CleanFrameVideo.spec
+      - name: Publish WinUI app
+        run: dotnet publish src/CleanFrame.Video2.App/CleanFrame.Video2.App.csproj -c Release -p:Platform=x64 -r win-x64 --self-contained true --no-restore -p:PublishReadyToRun=false -o artifacts/app
 
-      - name: Smoke test files
+      - name: Assemble portable artifact
         shell: pwsh
         run: |
-          if (!(Test-Path "dist/CleanFrameVideo/CleanFrameVideo.exe")) {
-            throw "Missing EXE"
-          }
-          $modelA = "dist/CleanFrameVideo/_internal/models/lama_fp32.onnx"
-          $modelB = "dist/CleanFrameVideo/models/lama_fp32.onnx"
-          if (!(Test-Path $modelA) -and !(Test-Path $modelB)) {
-            throw "Missing bundled LaMa model"
-          }
+          New-Item -ItemType Directory -Force 'artifacts\app\worker' | Out-Null
+          New-Item -ItemType Directory -Force 'artifacts\app\tools\ffmpeg\bin' | Out-Null
+          Copy-Item 'artifacts\worker\*' 'artifacts\app\worker' -Recurse -Force
+          Copy-Item 'third_party\ffmpeg\bin\ffmpeg.exe' 'artifacts\app\tools\ffmpeg\bin\ffmpeg.exe'
+          Copy-Item 'third_party\ffmpeg\bin\ffprobe.exe' 'artifacts\app\tools\ffmpeg\bin\ffprobe.exe'
+          Copy-Item 'docs\THIRD_PARTY_NOTICES.md' 'artifacts\app\THIRD_PARTY_NOTICES.md'
+          Copy-Item 'README.md' 'artifacts\app\README.md'
+          Get-ChildItem 'artifacts\app' -Recurse | Select-Object FullName, Length | Out-File 'artifacts\artifact-file-list.txt'
 
-      - name: Create ZIP
-        shell: pwsh
-        run: |
-          Compress-Archive -Path "dist/CleanFrameVideo/*" -DestinationPath "CleanFrameVideo-Windows-x64.zip" -Force
-          Get-FileHash "CleanFrameVideo-Windows-x64.zip" -Algorithm SHA256 | Format-List
-
-      - uses: actions/upload-artifact@v4
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: CleanFrameVideo-Windows-x64
-          path: CleanFrameVideo-Windows-x64.zip
+          name: CleanFrameVideo2-TestResults
+          path: |
+            TestResults
+            artifacts/worker-self-test.json
+          if-no-files-found: warn
+
+      - name: Upload Windows app
+        uses: actions/upload-artifact@v4
+        with:
+          name: CleanFrameVideo2-Windows-x64
+          path: artifacts/app
           if-no-files-found: error
           retention-days: 14

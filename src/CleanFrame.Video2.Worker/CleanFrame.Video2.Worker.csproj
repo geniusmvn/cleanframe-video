@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>CleanFrame.Video2.Worker</RootNamespace>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>false</PublishSingleFile>
+    <Platforms>x64</Platforms>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\CleanFrame.Video2.Core\CleanFrame.Video2.Core.csproj" />
+    <ProjectReference Include="..\CleanFrame.Video2.Engine\CleanFrame.Video2.Engine.csproj" />
+    <PackageReference Include="OpenCvSharp4.Windows" />
+  </ItemGroup>
+</Project>

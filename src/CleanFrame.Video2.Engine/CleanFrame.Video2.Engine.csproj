@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>CleanFrame.Video2.Engine</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\CleanFrame.Video2.Core\CleanFrame.Video2.Core.csproj" />
+    <PackageReference Include="OpenCvSharp4" />
+  </ItemGroup>
+</Project>
