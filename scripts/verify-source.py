@@ -99,6 +99,24 @@ def main() -> int:
     result["csharp_brace_files"] = len(csharp_files)
     result["csharp_numeric_type_guard"] = True
 
+    avalonia_input_symbols = (
+        "DragEventArgs",
+        "DragDrop",
+        "DragDropEffects",
+        "DataFormats",
+        "PointerEventArgs",
+        "PointerPressedEventArgs",
+        "PointerReleasedEventArgs",
+        "PointerWheelEventArgs",
+        "KeyEventArgs",
+    )
+    for path in (ROOT / "src" / "Erasa.Video.App").rglob("*.cs"):
+        source = path.read_text(encoding="utf-8")
+        if any(re.search(r"\b" + re.escape(symbol) + r"\b", source) for symbol in avalonia_input_symbols):
+            if "using Avalonia.Input;" not in source and "Avalonia.Input." not in source:
+                raise AssertionError(f"Missing Avalonia.Input namespace in {path}")
+    result["avalonia_input_namespace_guard"] = True
+
     main_window = (ROOT / "src" / "Erasa.Video.App" / "MainWindow.axaml.cs").read_text(encoding="utf-8")
     for token in ("Editor.PanDelta", "Editor.SetZoom(_zoom)", 'AppLog.WriteAsync("ProcessItem"'):
         if token not in main_window:
