@@ -38,7 +38,10 @@ jobs:
           if ($hash -ne $expected) { throw "LaMa checksum mismatch: $hash" }
 
       - name: Run tests
-        run: pytest -q
+  shell: pwsh
+  run: |
+    $env:PYTHONPATH = "${{ github.workspace }}"
+    python -m pytest -q
 
       - name: Build app
         run: pyinstaller --noconfirm CleanFrameVideo.spec
