@@ -1,0 +1,64 @@
+name: Build Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Download and verify LaMa ONNX
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force models | Out-Null
+          $url = "https://huggingface.co/Carve/LaMa-ONNX/resolve/main/lama_fp32.onnx?download=true"
+          Invoke-WebRequest -Uri $url -OutFile "models/lama_fp32.onnx"
+          $hash = (Get-FileHash "models/lama_fp32.onnx" -Algorithm SHA256).Hash.ToLower()
+          $expected = "1faef5301d78db7dda502fe59966957ec4b79dd64e16f03ed96913c7a4eb68d6"
+          if ($hash -ne $expected) { throw "LaMa checksum mismatch: $hash" }
+
+      - name: Run tests
+        run: pytest -q
+
+      - name: Build app
+        run: pyinstaller --noconfirm CleanFrameVideo.spec
+
+      - name: Smoke test files
+        shell: pwsh
+        run: |
+          if (!(Test-Path "dist/CleanFrameVideo/CleanFrameVideo.exe")) { throw "Missing EXE" }
+          if (!(Test-Path "dist/CleanFrameVideo/models/lama_fp32.onnx")) { throw "Missing model" }
+          Get-ChildItem "dist/CleanFrameVideo" -Recurse | Select-Object FullName,Length
+
+      - name: Create ZIP
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "dist/CleanFrameVideo/*" -DestinationPath "CleanFrameVideo-Windows-x64.zip" -Force
+          Get-FileHash "CleanFrameVideo-Windows-x64.zip" -Algorithm SHA256 | Format-List
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CleanFrameVideo-Windows-x64
+          path: CleanFrameVideo-Windows-x64.zip
+          if-no-files-found: error
+          retention-days: 14
