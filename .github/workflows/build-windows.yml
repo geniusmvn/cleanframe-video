@@ -24,8 +24,8 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest
+          python -m pip install -r requirements.txt
+          python -m pip install pytest
 
       - name: Download and verify LaMa ONNX
         shell: pwsh
@@ -38,20 +38,25 @@ jobs:
           if ($hash -ne $expected) { throw "LaMa checksum mismatch: $hash" }
 
       - name: Run tests
-  shell: pwsh
-  run: |
-    $env:PYTHONPATH = "${{ github.workspace }}"
-    python -m pytest -q
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = "${{ github.workspace }}"
+          python -m pytest -q
 
       - name: Build app
-        run: pyinstaller --noconfirm CleanFrameVideo.spec
+        run: python -m PyInstaller --noconfirm CleanFrameVideo.spec
 
       - name: Smoke test files
         shell: pwsh
         run: |
-          if (!(Test-Path "dist/CleanFrameVideo/CleanFrameVideo.exe")) { throw "Missing EXE" }
-          if (!(Test-Path "dist/CleanFrameVideo/models/lama_fp32.onnx")) { throw "Missing model" }
-          Get-ChildItem "dist/CleanFrameVideo" -Recurse | Select-Object FullName,Length
+          if (!(Test-Path "dist/CleanFrameVideo/CleanFrameVideo.exe")) {
+            throw "Missing EXE"
+          }
+          $modelA = "dist/CleanFrameVideo/_internal/models/lama_fp32.onnx"
+          $modelB = "dist/CleanFrameVideo/models/lama_fp32.onnx"
+          if (!(Test-Path $modelA) -and !(Test-Path $modelB)) {
+            throw "Missing bundled LaMa model"
+          }
 
       - name: Create ZIP
         shell: pwsh
