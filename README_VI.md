@@ -1,43 +1,55 @@
-# LaMa Studio 0.1.0 — source milestone
+# ERASA VIDEO 0.2 — Original LaMa
 
-Ứng dụng Windows mới, tách biệt hoàn toàn khỏi CleanFrame Video 2 cũ.
+Ứng dụng Windows xử lý **ảnh và video theo mask người dùng xác nhận**, dùng trực tiếp mã nguồn gốc của [`advimman/lama`](https://github.com/advimman/lama).
 
-## Mục tiêu bản đầu
+## Nền tảng xử lý
 
-- Mở ảnh hoặc video.
-- Người dùng tự vẽ mask bằng Cọ, Tẩy hoặc Khung.
-- Ảnh: chạy LaMa một lần và chỉ ghép kết quả trong mask.
-- Video: chạy LaMa trên từng frame với cùng mask, ghép lại bằng FFmpeg và giữ audio.
-- Chọn Tự động / NVIDIA GPU / CPU.
-- Preview ảnh hoặc preview video 3 giây trước khi xuất đầy đủ.
-- Không có detector tự động và không dùng FFmpeg delogo.
-- Người dùng không phải cài Python, pip, CMD hoặc PowerShell. Artifact Windows đóng gói runtime riêng.
+- Workflow tải đúng repository `advimman/lama` tại commit cố định `786f5936b27fb3dacd2b1ad799e4de968ea697e7`.
+- Worker thêm source upstream vào `sys.path` và import trực tiếp:
+  `from saicinpainting.training.trainers import load_checkpoint`.
+- Model là cấu trúc gốc `config.yaml` + `models/best.ckpt` trong gói `big-lama.zip`.
+- Không dùng ONNX, TorchScript chuyển đổi, `simple-lama`, `lama-cleaner` hoặc FFmpeg `delogo`.
+- Bản artifact mặc định đóng gói PyTorch CPU để dễ build và luôn có fallback.
+- Trong **Cài đặt**, nút **Cài gói NVIDIA** tự cài PyTorch CUDA cho GTX 1660 Super; người dùng không mở CMD, PowerShell, pip hay Python.
 
-## Nguồn LaMa
+## Giao diện ERASA VIDEO
 
-- Kiến trúc gốc: `advimman/lama`, Apache-2.0.
-- Runtime dùng TorchScript `big-lama.pt` được IOPaint phân phối từ implementation LaMa.
-- Attribution và checksum nằm trong `THIRD_PARTY_NOTICES.md` và workflow.
+- Trắng, xám nhạt và cam theo logo ERASA.
+- Preview lớn bên trái, danh sách xử lý bên phải.
+- Tab **Video / Ảnh**.
+- **Chọn tệp**, **Thêm thư mục**, kéo thả file hoặc thư mục.
+- Cọ, tẩy, khung, elip, pan, mask mềm, undo, redo, reset và zoom.
+- Đề xuất overlay tĩnh tổng quát cho video; người dùng phải kiểm tra/chỉnh mask.
+- Preview 3 giây trước khi xử lý toàn bộ.
 
-LaMa gốc là mô hình inpainting ảnh. Chế độ video của ứng dụng giải mã video thành frame, chạy LaMa trên từng frame rồi mã hóa lại; không tuyên bố đây là mô hình LaMa được huấn luyện riêng cho video.
+## Hàng đợi và độ ổn định
 
-## Build bằng GitHub Desktop
+- Worker LaMa chạy ở process Python riêng; lỗi worker được bắt và ghi log, không chủ động đóng UI.
+- Queue được lưu trong `%LocalAppData%\ERASA_VIDEO\queue.json`.
+- Video được chia thành các đoạn 2 giây. **Tạm dừng / Tiếp tục / Thử lại** dùng lại các đoạn đã hoàn thành.
+- **Hủy tác vụ** xóa checkpoint và file tạm của job.
+- Pixel raw ngoài mask được chép lại từ frame gốc trước encode.
+- Sau khi xuất video, worker kiểm tra lại độ phân giải, FPS, thời lượng và sự tồn tại của audio nếu nguồn có audio.
 
-1. Chép toàn bộ source vào repo.
-2. Trong GitHub Desktop nhập Summary: `Add LaMa Studio source`.
-3. Bấm **Commit to main**.
-4. Bấm **Push origin**.
-5. Mở GitHub → **Actions** → **Build Windows**.
-6. Chỉ tải artifact `LaMaStudio-Windows-x64` khi workflow có dấu xanh.
+## Build không dùng dòng lệnh
 
-## Trạng thái kiểm chứng
+1. Trong GitHub Desktop: **Repository** → **Show in Explorer**.
+2. Giữ thư mục `.git`, thay source cũ bằng nội dung source này.
+3. Summary nhập: `Rebuild ERASA VIDEO on original LaMa`.
+4. Bấm **Commit to main** → **Push origin**.
+5. Trên GitHub mở **Actions** → **Build ERASA Windows**.
+6. Chỉ tải `ERASA-VIDEO-Windows-x64` khi workflow có dấu xanh.
 
-Trong môi trường tạo source này không có .NET SDK và không có mạng để restore NuGet, nên chưa chạy build hoặc model inference tại đây. GitHub Actions có các bước bắt buộc:
+## Kiểm thử trong workflow
 
-- build ứng dụng;
-- unit test;
-- kiểm tra checksum model;
-- self-test LaMa trên ảnh tổng hợp;
-- publish artifact Windows.
+- Test mask/undo/redo và queue retry/resume bằng .NET.
+- Test detector không chọn full-frame ngẫu nhiên.
+- Test pixel ngoài mask không đổi trong pipeline raw.
+- Test checkpoint thay đổi khi mask thay đổi, tái sử dụng segment đã xong và dọn file segment dang dở.
+- Tải source/model upstream có commit và checksum cố định.
+- Chạy self-test thật với checkpoint LaMa gốc trên CPU.
+- Tạo video có audio, xuất preview đúng 3 giây bằng LaMa frame-by-frame và kiểm tra kích thước/FPS/thời lượng/audio.
 
-Chưa được gọi đây là ứng dụng hoàn chỉnh cho đến khi workflow xanh và artifact chạy được trên Windows.
+## Trạng thái
+
+Đây là **source bàn giao**. Không gọi là ứng dụng Windows đã hoàn chỉnh cho đến khi GitHub Actions chạy xanh và artifact được mở thử trên máy Windows thực tế.

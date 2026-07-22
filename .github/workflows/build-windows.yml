@@ -1,4 +1,4 @@
-name: Build Windows
+name: Build ERASA Windows
 
 on:
   push:
@@ -11,12 +11,12 @@ permissions:
 jobs:
   build:
     runs-on: windows-2022
-    timeout-minutes: 90
+    timeout-minutes: 120
     env:
       DOTNET_NOLOGO: true
       DOTNET_CLI_TELEMETRY_OPTOUT: true
-      MODEL_URL: https://github.com/Sanster/models/releases/download/add_big_lama/big-lama.pt
-      MODEL_MD5: e3aa4aaa15225a33ec84f9f4bc47e500
+      PYTHONUTF8: 1
+      PYTHONIOENCODING: utf-8
 
     steps:
       - name: Checkout
@@ -25,12 +25,12 @@ jobs:
       - name: Setup .NET 8
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: 8.0.423
 
-      - name: Setup Python 3.10
+      - name: Setup build Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
 
       - name: Download FFmpeg
         shell: pwsh
@@ -41,68 +41,122 @@ jobs:
           Invoke-WebRequest 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip' -OutFile $zip
           Expand-Archive $zip -DestinationPath $expanded -Force
           $bin = Get-ChildItem $expanded -Directory | Select-Object -First 1 | ForEach-Object { Join-Path $_.FullName 'bin' }
-          New-Item -ItemType Directory -Force 'artifacts\runtime\tools\ffmpeg\bin' | Out-Null
-          Copy-Item (Join-Path $bin 'ffmpeg.exe') 'artifacts\runtime\tools\ffmpeg\bin\ffmpeg.exe'
-          Copy-Item (Join-Path $bin 'ffprobe.exe') 'artifacts\runtime\tools\ffmpeg\bin\ffprobe.exe'
+          New-Item -ItemType Directory -Force 'artifacts/tools/ffmpeg/bin' | Out-Null
+          Copy-Item (Join-Path $bin 'ffmpeg.exe') 'artifacts/tools/ffmpeg/bin/ffmpeg.exe'
+          Copy-Item (Join-Path $bin 'ffprobe.exe') 'artifacts/tools/ffmpeg/bin/ffprobe.exe'
+          & 'artifacts/tools/ffmpeg/bin/ffmpeg.exe' -version
 
-      - name: Install bundled worker runtime
+      - name: Verify pinned upstream manifest
         shell: pwsh
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install torch==2.1.2+cu118 --index-url https://download.pytorch.org/whl/cu118
-          python -m pip install -r worker/requirements.txt
-          New-Item -ItemType Directory -Force 'artifacts\runtime\tools\python' | Out-Null
-          Copy-Item "$env:pythonLocation\*" 'artifacts\runtime\tools\python' -Recurse -Force
-          New-Item -ItemType Directory -Force 'artifacts\runtime\worker' | Out-Null
-          Copy-Item 'worker\main.py' 'artifacts\runtime\worker\main.py'
-
-      - name: Download and verify LaMa model
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force 'artifacts\runtime\models' | Out-Null
-          Invoke-WebRequest $env:MODEL_URL -OutFile 'artifacts\runtime\models\big-lama.pt'
-          $actual = (Get-FileHash 'artifacts\runtime\models\big-lama.pt' -Algorithm MD5).Hash.ToLowerInvariant()
-          if ($actual -ne $env:MODEL_MD5) { throw "Model checksum mismatch: $actual" }
+          $manifest = Get-Content upstream/UPSTREAM.json -Raw | ConvertFrom-Json
+          if ($manifest.repository -ne 'https://github.com/advimman/lama') { throw 'Wrong upstream repository.' }
+          if ($manifest.commit -ne '786f5936b27fb3dacd2b1ad799e4de968ea697e7') { throw 'Wrong upstream commit.' }
+          if ($manifest.model_sha256 -ne 'f1b358ca24093b93a106183b98a3dea6e8ed09f3b43ea7251eb2c81e7b4575f6') { throw 'Wrong model checksum.' }
 
       - name: Restore
-        run: dotnet restore LaMaStudio.sln
+        run: dotnet restore Erasa.Video.sln
 
-      - name: Test
-        run: dotnet test tests/LaMaStudio.Tests/LaMaStudio.Tests.csproj -c Release --no-restore --logger "trx;LogFileName=lamastudio-tests.trx" --results-directory TestResults
+      - name: Test .NET
+        run: dotnet test tests/Erasa.Video.Tests/Erasa.Video.Tests.csproj -c Release --no-restore --logger "trx;LogFileName=erasa-tests.trx" --results-directory TestResults
+
+      - name: Install worker test dependencies
+        run: python -m pip install numpy==1.26.4 opencv-python-headless==4.10.0.84 PyYAML==6.0.2
+
+      - name: Test worker core
+        run: python -m unittest discover -s tests/python -v
+
+      - name: Verify source structure
+        shell: pwsh
+        run: python scripts/verify-source.py | Tee-Object -FilePath artifacts/source-verification.json
+
+      - name: Verify original LaMa wiring
+        shell: pwsh
+        run: |
+          $worker = Get-Content worker/erasa_worker.py -Raw
+          if ($worker -notmatch 'from saicinpainting.training.trainers import load_checkpoint') { throw 'Worker is not wired to original advimman/lama checkpoint loader.' }
+          if ($worker -match 'onnxruntime|simple_lama|simple-lama|lama_cleaner|lama-cleaner') { throw 'Third-party or converted LaMa runtime found.' }
+          if ($worker -notmatch 'batch\["inpainted"\]') { throw 'Original LaMa inpainted output is not used.' }
+          if ($worker -notmatch 'np.where\(m, result, bgr') { throw 'Outside-mask raw pixel composite is missing.' }
+          $ui = Get-Content src/Erasa.Video.App/MainWindow.axaml.cs -Raw
+          if ($ui -match 'Environment\.Exit|FailFast') { throw 'UI contains a process-killing error path.' }
+          if ($ui -notmatch 'catch \(Exception ex\)[\s\S]*AppLog\.WriteAsync\("ProcessItem"') { throw 'Per-job worker failure handling is missing.' }
+          if ($ui -notmatch 'failed item must not close the application or block the remaining queue') { throw 'Queue continuation contract is missing.' }
 
       - name: Publish desktop app
-        run: dotnet publish src/LaMaStudio.App/LaMaStudio.App.csproj -c Release -r win-x64 --self-contained true -o artifacts/app
+        run: dotnet publish src/Erasa.Video.App/Erasa.Video.App.csproj -c Release -r win-x64 --self-contained true -o artifacts/app
+
+      - name: Prepare original LaMa runtime
+        shell: pwsh
+        run: ./scripts/prepare-runtime.ps1 -Destination artifacts/runtime
 
       - name: Assemble artifact
         shell: pwsh
         run: |
-          Copy-Item 'artifacts\runtime\*' 'artifacts\app' -Recurse -Force
-          Copy-Item 'README_VI.md' 'artifacts\app\README_VI.md'
-          Copy-Item 'THIRD_PARTY_NOTICES.md' 'artifacts\app\THIRD_PARTY_NOTICES.md'
-          Copy-Item 'licenses' 'artifacts\app\licenses' -Recurse -Force
+          Get-ChildItem worker -Recurse -Directory -Filter __pycache__ | Remove-Item -Recurse -Force
+          Copy-Item 'artifacts/runtime' 'artifacts/app/runtime' -Recurse -Force
+          Copy-Item 'artifacts/tools' 'artifacts/app/tools' -Recurse -Force
+          Copy-Item 'worker' 'artifacts/app/worker' -Recurse -Force
+          Copy-Item 'README_VI.md' 'artifacts/app/README_VI.md'
+          Copy-Item 'THIRD_PARTY_NOTICES.md' 'artifacts/app/THIRD_PARTY_NOTICES.md'
+          Get-ChildItem 'artifacts/app' -Recurse | Select-Object FullName, Length | Out-File 'artifacts/artifact-file-list.txt'
 
-      - name: LaMa CPU self-test
+      - name: Original LaMa CPU self-test
         shell: pwsh
         run: |
           Push-Location artifacts/app
-          & '.\tools\python\python.exe' -X utf8 -I '.\worker\main.py' selftest --device cpu | Tee-Object -FilePath '..\worker-self-test.jsonl'
+          $env:ERASA_APP_ROOT = (Get-Location).Path
+          & '.\runtime\python\python.exe' -X utf8 '.\worker\erasa_worker.py' selftest --device cpu | Tee-Object -FilePath '..\lama-self-test.jsonl'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Pop-Location
+
+      - name: Original LaMa video integration test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force 'artifacts/integration' | Out-Null
+          & 'artifacts/tools/ffmpeg/bin/ffmpeg.exe' -y -v error `
+            -f lavfi -i 'testsrc2=size=128x128:rate=4:duration=4' `
+            -f lavfi -i 'sine=frequency=1000:sample_rate=48000:duration=4' `
+            -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest 'artifacts/integration/input.mp4'
+          & 'artifacts/app/runtime/python/python.exe' -X utf8 -c "import cv2,numpy as np; m=np.zeros((128,128),np.uint8); m[42:86,42:86]=255; assert cv2.imwrite(r'artifacts/integration/mask.png',m)"
+          Push-Location artifacts/app
+          $env:ERASA_APP_ROOT = (Get-Location).Path
+          & '.\runtime\python\python.exe' -X utf8 '.\worker\erasa_worker.py' video `
+            --input '..\integration\input.mp4' --mask '..\integration\mask.png' `
+            --output '..\integration\output.mp4' --device cpu --crf 24 `
+            --start 0.5 --duration 3 --state-dir '..\integration\state' --segment-seconds 0.5 `
+            | Tee-Object -FilePath '..\integration\video-test.jsonl'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Pop-Location
+          $probe = & 'artifacts/tools/ffmpeg/bin/ffprobe.exe' -v error -show_streams -show_format -of json 'artifacts/integration/output.mp4' | ConvertFrom-Json
+          $video = $probe.streams | Where-Object codec_type -eq 'video' | Select-Object -First 1
+          $audio = $probe.streams | Where-Object codec_type -eq 'audio' | Select-Object -First 1
+          if ($video.width -ne 128 -or $video.height -ne 128) { throw 'Video integration test changed resolution.' }
+          if ($null -eq $audio) { throw 'Video integration test lost audio.' }
+          $duration = [double]$probe.format.duration
+          if ([math]::Abs($duration - 3.0) -gt 0.25) { throw "Preview duration is $duration instead of 3 seconds." }
+          $rate = $video.avg_frame_rate -split '/'
+          $fps = [double]$rate[0] / [math]::Max([double]$rate[1], 1)
+          if ([math]::Abs($fps - 4.0) -gt 0.02) { throw "Preview FPS is $fps instead of 4." }
 
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: LaMaStudio-TestResults
+          name: ERASA-VIDEO-TestResults
           path: |
             TestResults
-            artifacts/worker-self-test.jsonl
+            artifacts/lama-self-test.jsonl
+            artifacts/artifact-file-list.txt
+            artifacts/source-verification.json
+            artifacts/integration
           if-no-files-found: warn
 
       - name: Upload Windows app
         uses: actions/upload-artifact@v4
         with:
-          name: LaMaStudio-Windows-x64
+          name: ERASA-VIDEO-Windows-x64
           path: artifacts/app
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 7

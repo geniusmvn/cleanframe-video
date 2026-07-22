@@ -2,24 +2,23 @@
 
 ## LaMa
 
-LaMa: Resolution-robust Large Mask Inpainting with Fourier Convolutions.
-Original source: https://github.com/advimman/lama
-Copyright 2021 Samsung Research.
-License: Apache License 2.0. See `licenses/LaMa-Apache-2.0.txt`.
+- Project: `advimman/lama`
+- Pinned commit: `786f5936b27fb3dacd2b1ad799e4de968ea697e7`
+- License: Apache License 2.0
+- Copyright notice from upstream must be retained in the packaged `runtime/lama/LICENSE`.
 
-## IOPaint TorchScript model distribution
+## big-lama checkpoint
 
-The packaged `big-lama.pt` is downloaded from the IOPaint model release URL used by IOPaint's LaMa implementation:
-https://github.com/Sanster/models/releases/download/add_big_lama/big-lama.pt
-Expected MD5: e3aa4aaa15225a33ec84f9f4bc47e500
-IOPaint source: https://github.com/Sanster/IOPaint
-License: Apache License 2.0.
+The build downloads the model package referenced by the upstream LaMa README. The model host credits the original LaMa authors and declares Apache-2.0.
 
 ## Avalonia
 
-Avalonia UI framework. License: MIT.
-https://github.com/AvaloniaUI/Avalonia
+Avalonia UI packages are MIT licensed.
 
 ## FFmpeg
 
-FFmpeg is downloaded during CI from the gyan.dev essentials build. FFmpeg licensing depends on the exact bundled build; the artifact includes the build's license files when available.
+The build downloads an FFmpeg Windows essentials distribution. Redistributors must review the codec configuration and applicable LGPL/GPL terms before public distribution.
+
+## PyTorch and Python
+
+Their respective licenses and notices are copied into the Windows artifact where available.

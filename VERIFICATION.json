@@ -1,0 +1,63 @@
+{
+  "artifact_kind": "source-only milestone",
+  "product": "ERASA VIDEO",
+  "version": "0.2.0",
+  "generated_utc": "2026-07-22T17:40:25.429828+00:00",
+  "original_lama": {
+    "repository": "https://github.com/advimman/lama",
+    "commit": "786f5936b27fb3dacd2b1ad799e4de968ea697e7",
+    "loading_contract": "saicinpainting.training.trainers.load_checkpoint + config.yaml + models/best.ckpt",
+    "converted_runtime_used": false
+  },
+  "actually_run": [
+    {
+      "name": "Python worker unit tests",
+      "result": "PASS",
+      "count": 6,
+      "log": "verification/python-unit-tests.txt"
+    },
+    {
+      "name": "Python syntax/AST",
+      "result": "PASS"
+    },
+    {
+      "name": "AXAML/csproj/props XML parse",
+      "result": "PASS",
+      "count": 9
+    },
+    {
+      "name": "GitHub Actions YAML parse",
+      "result": "PASS"
+    },
+    {
+      "name": "XAML event handler linkage static check",
+      "result": "PASS",
+      "count": 37
+    },
+    {
+      "name": "C# gross brace/static source integrity",
+      "result": "PASS",
+      "count": 23
+    },
+    {
+      "name": "Direct original-LaMa wiring/static banned-runtime check",
+      "result": "PASS"
+    },
+    {
+      "name": "Brand asset existence",
+      "result": "PASS"
+    }
+  ],
+  "not_run_here": [
+    "dotnet restore",
+    "dotnet test",
+    "dotnet publish win-x64",
+    "download original LaMa/model runtime",
+    "original checkpoint CPU self-test",
+    "3-second LaMa video/audio integration test",
+    "Windows artifact launch"
+  ],
+  "source_file_count_excluding_verification_metadata": 55,
+  "source_manifest_sha256": "999637ce1b8a169ed1078fc20b4d4e7fc3f4a0a8acbbb487d1b8a510e9495496",
+  "scope_note": "SHA256.txt hashes files excluding SHA256.txt, SOURCE_INVENTORY.txt and VERIFICATION.json to avoid self-reference."
+}

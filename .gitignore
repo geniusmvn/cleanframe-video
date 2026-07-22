@@ -3,11 +3,10 @@
 **/obj/
 artifacts/
 TestResults/
+.runtime/
 *.user
 *.suo
 *.log
 *.tmp
 *.temp
-models/*.pt
-tools/
-!tools/.gitkeep
+*.zip

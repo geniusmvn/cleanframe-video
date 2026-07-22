@@ -1,0 +1,41 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:services="using:Erasa.Video.App.Services"
+             x:Class="Erasa.Video.App.App"
+             RequestedThemeVariant="Light">
+  <Application.Resources>
+    <services:PathBitmapConverter x:Key="PathBitmapConverter" />
+  </Application.Resources>
+  <Application.Styles>
+    <FluentTheme />
+    <Style Selector="Window">
+      <Setter Property="FontFamily" Value="avares://Avalonia.Fonts.Inter/Assets#Inter" />
+      <Setter Property="Background" Value="#FFFDFB" />
+    </Style>
+    <Style Selector="Button">
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="Padding" Value="14,9" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="Button.primary">
+      <Setter Property="Background" Value="#FF6B00" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="BorderBrush" Value="#FF6B00" />
+    </Style>
+    <Style Selector="Button.tool">
+      <Setter Property="Background" Value="#FFF8F2" />
+      <Setter Property="BorderBrush" Value="#E8DED6" />
+      <Setter Property="Padding" Value="12,7" />
+    </Style>
+    <Style Selector="Button.tool.selected">
+      <Setter Property="Background" Value="#FF6B00" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="Border.card">
+      <Setter Property="Background" Value="White" />
+      <Setter Property="BorderBrush" Value="#E8E2DC" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="12" />
+    </Style>
+  </Application.Styles>
+</Application>
