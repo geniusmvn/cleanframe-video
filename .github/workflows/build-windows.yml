@@ -11,7 +11,8 @@ permissions:
 
 jobs:
   build:
-    runs-on: windows-latest
+    # Pin the established VS2022 image instead of the moving windows-latest/VS2026 image.
+    runs-on: windows-2022
     timeout-minutes: 60
     env:
       DOTNET_NOLOGO: true
@@ -26,6 +27,9 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.423
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
 
       - name: Download FFmpeg
         shell: pwsh
@@ -76,7 +80,24 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Publish WinUI app
-        run: dotnet publish src/CleanFrame.Video2.App/CleanFrame.Video2.App.csproj -c Release -p:Platform=x64 -r win-x64 --self-contained true --no-restore -p:PublishReadyToRun=false -o artifacts/app
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force 'artifacts' | Out-Null
+          $publishDir = Join-Path $env:GITHUB_WORKSPACE 'artifacts\app'
+          msbuild 'src\CleanFrame.Video2.App\CleanFrame.Video2.App.csproj' `
+            /t:Publish `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /p:RuntimeIdentifier=win-x64 `
+            /p:SelfContained=true `
+            /p:WindowsAppSDKSelfContained=true `
+            /p:PublishReadyToRun=false `
+            "/p:PublishDir=$publishDir" `
+            /bl:artifacts\winui-publish.binlog `
+            /fl `
+            "/flp:logfile=artifacts\winui-publish.log;verbosity=diagnostic"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Assemble portable artifact
         shell: pwsh
@@ -90,7 +111,7 @@ jobs:
           Copy-Item 'README.md' 'artifacts\app\README.md'
           Get-ChildItem 'artifacts\app' -Recurse | Select-Object FullName, Length | Out-File 'artifacts\artifact-file-list.txt'
 
-      - name: Upload test logs
+      - name: Upload diagnostic and test logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -98,6 +119,8 @@ jobs:
           path: |
             TestResults
             artifacts/worker-self-test.json
+            artifacts/winui-publish.log
+            artifacts/winui-publish.binlog
           if-no-files-found: warn
 
       - name: Upload Windows app

@@ -4,6 +4,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageVersion Include="Microsoft.WindowsAppSDK" Version="2.2.0" />
+    <PackageVersion Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.8249" />
     <PackageVersion Include="OpenCvSharp4" Version="4.13.0.20260627" />
     <PackageVersion Include="OpenCvSharp4.Windows" Version="4.13.0.20260627" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
