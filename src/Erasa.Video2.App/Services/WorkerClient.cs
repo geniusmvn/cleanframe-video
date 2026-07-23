@@ -122,9 +122,9 @@ public sealed class WorkerClient
         var baseDirectory = AppContext.BaseDirectory;
         var candidates = new[]
         {
-            Path.Combine(baseDirectory, "worker", "Erasa.Video2.Worker.exe"),
-            Path.Combine(baseDirectory, "Erasa.Video2.Worker.exe"),
-            Path.GetFullPath(Path.Combine(baseDirectory, "..", "Erasa.Video2.Worker", "Erasa.Video2.Worker.exe"))
+            Path.Combine(baseDirectory, "worker", "Erasa.Video2.Worker.Host.exe"),
+            Path.Combine(baseDirectory, "Erasa.Video2.Worker.Host.exe"),
+            Path.GetFullPath(Path.Combine(baseDirectory, "..", "Erasa.Video2.Worker.Host", "Erasa.Video2.Worker.Host.exe"))
         };
         return candidates.FirstOrDefault(File.Exists) ?? candidates[0];
     }

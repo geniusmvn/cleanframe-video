@@ -18,7 +18,7 @@ except ImportError:
     sys.modules["torch"] = torch_stub
 
 ROOT = Path(__file__).resolve().parents[2]
-BRIDGE = ROOT / "src" / "Erasa.Video2.Worker" / "Python" / "lama_bridge.py"
+BRIDGE = ROOT / "src" / "Erasa.Video2.Worker.Core" / "Python" / "lama_bridge.py"
 spec = importlib.util.spec_from_file_location("lama_bridge", BRIDGE)
 bridge = importlib.util.module_from_spec(spec)
 assert spec.loader is not None

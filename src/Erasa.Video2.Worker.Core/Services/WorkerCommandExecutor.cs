@@ -1,27 +1,30 @@
 using Erasa.Video2.Core.Protocol;
 
-namespace Erasa.Video2.Worker.Services;
+namespace Erasa.Video2.Worker.Core.Services;
 
-public sealed class WorkerHost
+public interface IWorkerCommandExecutor
 {
-    private readonly Action<WorkerMessage> _emit;
+    Task<WorkerMessage> ExecuteAsync(WorkerRequest request, CancellationToken cancellationToken);
+}
+
+public sealed class WorkerCommandExecutor : IWorkerCommandExecutor
+{
     private readonly FfmpegService _ffmpeg;
     private readonly RuntimeInstaller _runtime;
     private readonly PythonBridgeService _bridge;
     private readonly VideoPipelineService _pipeline;
 
-    public WorkerHost(Action<WorkerMessage> emit)
+    public WorkerCommandExecutor(Action<WorkerMessage> emit)
     {
-        _emit = emit;
         _ffmpeg = new FfmpegService();
         _runtime = new RuntimeInstaller(emit);
         _bridge = new PythonBridgeService(emit);
         _pipeline = new VideoPipelineService(emit, _ffmpeg, _bridge);
     }
 
-    public async Task ExecuteAsync(WorkerRequest request, CancellationToken cancellationToken)
+    public async Task<WorkerMessage> ExecuteAsync(WorkerRequest request, CancellationToken cancellationToken)
     {
-        WorkerMessage result = request.Command switch
+        return request.Command switch
         {
             WorkerCommands.Probe => await ProbeAsync(request, cancellationToken),
             WorkerCommands.Thumbnail => await ThumbnailAsync(request, cancellationToken),
@@ -34,7 +37,6 @@ public sealed class WorkerHost
             WorkerCommands.SelfTestRuntime => await SelfTestRuntimeAsync(request, cancellationToken),
             _ => throw new InvalidOperationException($"Worker command không được hỗ trợ: {request.Command}")
         };
-        _emit(result);
     }
 
     private async Task<WorkerMessage> ProbeAsync(WorkerRequest request, CancellationToken cancellationToken)

@@ -3,7 +3,7 @@ using Erasa.Video2.Core.Models;
 using Erasa.Video2.Core.Queue;
 using Erasa.Video2.Core.Protocol;
 
-namespace Erasa.Video2.Worker.Services;
+namespace Erasa.Video2.Worker.Core.Services;
 
 public sealed class VideoPipelineService(Action<WorkerMessage> emit, FfmpegService ffmpeg, PythonBridgeService bridge)
 {

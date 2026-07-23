@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Erasa.Video2.Worker.Host</RootNamespace>
+    <AssemblyName>Erasa.Video2.Worker.Host</AssemblyName>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Erasa.Video2.Core\Erasa.Video2.Core.csproj" />
+    <ProjectReference Include="..\Erasa.Video2.Worker.Core\Erasa.Video2.Worker.Core.csproj" />
+    <None Include="..\Erasa.Video2.Worker.Core\Python\lama_bridge.py" Link="Python\lama_bridge.py" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\Erasa.Video2.Worker.Core\Runtime\runtime-manifest.json" Link="Runtime\runtime-manifest.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

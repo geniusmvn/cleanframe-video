@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Erasa.Video2.Worker.Core</RootNamespace>
+    <AssemblyName>Erasa.Video2.Worker.Core</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Erasa.Video2.Core\Erasa.Video2.Core.csproj" />
+  </ItemGroup>
+</Project>

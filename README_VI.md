@@ -1,51 +1,25 @@
-# ERASA VIDEO 2 — Source 1.0.0
+# ERASA VIDEO 2 — Architecture 1.1
 
-Ứng dụng Windows xử lý ảnh và video trong **mask do người dùng kiểm tra và xác nhận**.
+Ứng dụng Windows xử lý ảnh/video trong vùng mask do người dùng xác nhận. Lõi inpainting sử dụng trực tiếp source `advimman/lama` và checkpoint Big-LaMa; video ưu tiên dữ liệu temporal rồi chỉ gọi LaMa cho vùng thiếu dữ liệu.
 
 ## Kiến trúc
 
-- **.NET 8 + WinUI 3** cho giao diện.
-- **Worker `.exe` riêng** cho FFmpeg, runtime và pipeline. Worker lỗi không chủ động đóng giao diện.
-- **FFmpeg đóng gói** trong artifact Windows.
-- **Mã nguồn gốc `advimman/lama`** được tải từ commit cố định `786f5936b27fb3dacd2b1ad799e4de968ea697e7` khi người dùng bấm cài bộ xử lý.
-- Không dùng ONNX, TorchScript chuyển đổi, `simple-lama`, `lama-cleaner` hoặc FFmpeg `delogo`.
-- Video dùng optical flow hai chiều và confidence temporal trước; Big-LaMa chỉ điền pixel không đủ dữ liệu từ frame lân cận.
+- `Erasa.Video2.Core`: model, mask, state machine, queue và protocol.
+- `Erasa.Video2.Worker.Core`: FFmpeg, runtime LaMa, temporal pipeline và xử lý tác vụ.
+- `Erasa.Video2.Worker.Host`: process IPC rất mỏng, không chứa logic xử lý.
+- `Erasa.Video2.App`: WinUI 3; lỗi worker không được đóng UI.
+- `Erasa.Video2.Tests`: chỉ tham chiếu Core và Worker.Core, không tham chiếu worker `.exe`.
 
-## Luồng sử dụng
+## CI có cổng chặn
 
-1. **Chọn tệp** hoặc **Thêm thư mục**.
-2. Vẽ bằng **Cọ / Tẩy / Khung / Elip**, hoặc dùng **Tự động đề xuất** cho video.
-3. Bấm **Xác nhận mask**.
-4. Bấm **Preview 3 giây**.
-5. Khi preview đạt, bấm **XỬ LÝ**.
+1. Source/Python checks.
+2. Core + Worker.Core tests bằng Any CPU.
+3. Publish Worker Host và FFmpeg self-test.
+4. Cài source LaMa gốc, Big-LaMa và chạy CPU/video integration.
+5. Chỉ sau khi 4 tầng trên xanh mới publish WinUI và tạo artifact.
 
-Ảnh xem trước không bị xóa khi worker lỗi. Preview và Xử lý chỉ được mở sau khi mask đã xác nhận.
+Runtime LaMa được cài từ trong ứng dụng vào thư mục người dùng; người dùng không phải cài Python, pip, CMD hoặc PowerShell. Artifact không nhồi runtime AI khổng lồ chưa kiểm thử.
 
-## Runtime LaMa
+## Bàn giao
 
-Artifact Windows đầy đủ **đóng gói sẵn** Python nhúng, PyTorch CUDA (có CPU fallback), source gốc LaMa và checkpoint Big-LaMa. Người dùng không cần Python, pip, CMD hay PowerShell.
-
-- Máy có NVIDIA: chế độ Tự động ưu tiên CUDA.
-- Không có CUDA: cùng runtime tự chạy CPU.
-- Nếu runtime đi kèm bị xóa, ứng dụng vẫn có chức năng cài lại tự động vào `%LocalAppData%\ERASA_VIDEO_2\runtime`.
-- Artifact lớn hơn vì ưu tiên mở lên là dùng được.
-
-## Build Windows
-
-GitHub Actions `.github/workflows/build-windows.yml` thực hiện:
-
-- build toàn bộ solution;
-- test .NET và Python;
-- publish worker riêng;
-- FFmpeg utility self-test;
-- publish WinUI 3;
-- startup smoke test thật của `ERASA.Video.exe`;
-- cài runtime CPU;
-- self-test Big-LaMa từ source gốc;
-- integration test video 3 giây có audio, FPS và độ phân giải.
-
-Chỉ coi bản Windows là đạt khi workflow xanh và artifact `ERASA-VIDEO-2-Windows-x64` được tạo.
-
-## Phạm vi
-
-Đây là công cụ inpainting generic. Nó không xử lý watermark vô hình, SynthID hoặc Content Credentials, và không có bộ nhận diện chuyên phá dấu nguồn của một hãng cụ thể.
+Chỉ coi bản Windows là dùng được khi workflow `Build ERASA VIDEO 2` xanh ở cả 5 job và artifact `ERASA-VIDEO-2-Windows-x64` xuất hiện.

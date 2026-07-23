@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 
-namespace Erasa.Video2.Worker.Services;
+namespace Erasa.Video2.Worker.Core.Services;
 
 public sealed record ProcessResult(int ExitCode, string StandardOutput, string StandardError);
 

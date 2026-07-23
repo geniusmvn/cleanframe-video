@@ -42,9 +42,9 @@ def main() -> int:
         'src/Erasa.Video2.App/MainWindow.xaml',
         'src/Erasa.Video2.App/MainWindow.xaml.cs',
         'src/Erasa.Video2.App/Controls/MaskEditor.xaml.cs',
-        'src/Erasa.Video2.Worker/Services/WorkerHost.cs',
-        'src/Erasa.Video2.Worker/Python/lama_bridge.py',
-        'src/Erasa.Video2.Worker/Runtime/runtime-manifest.json',
+        'src/Erasa.Video2.Worker.Core/Services/WorkerCommandExecutor.cs',
+        'src/Erasa.Video2.Worker.Core/Python/lama_bridge.py',
+        'src/Erasa.Video2.Worker.Core/Runtime/runtime-manifest.json',
         'tests/Erasa.Video2.Tests/MaskRasterizerTests.cs',
         '.github/workflows/build-windows.yml',
     ]
@@ -64,7 +64,7 @@ def main() -> int:
         raise AssertionError('Workflow YAML is invalid.')
     result['workflow_yaml'] = True
 
-    bridge_path = ROOT / 'src/Erasa.Video2.Worker/Python/lama_bridge.py'
+    bridge_path = ROOT / 'src/Erasa.Video2.Worker.Core/Python/lama_bridge.py'
     ast.parse(bridge_path.read_text(encoding='utf-8'), filename=str(bridge_path))
     result['python_ast'] = True
 
@@ -124,15 +124,34 @@ def main() -> int:
     result['mask_tools'] = 5
 
     workflow_text = (ROOT / '.github/workflows/build-windows.yml').read_text(encoding='utf-8')
-    for step in ['Build complete solution', 'WinUI startup smoke test', 'Original LaMa CPU self-test', 'Original LaMa video integration test']:
+    for step in ['Build and test Any CPU', 'Worker FFmpeg utility self-test', 'WinUI startup smoke test', 'Original LaMa CPU self-test', 'Original LaMa video integration test']:
         if step not in workflow_text:
             raise AssertionError(f'Missing CI proof step: {step}')
-    result['ci_proof_steps'] = 4
+    result['ci_proof_steps'] = 5
 
-    manifest = json.loads((ROOT / 'src/Erasa.Video2.Worker/Runtime/runtime-manifest.json').read_text(encoding='utf-8'))
+    manifest = json.loads((ROOT / 'src/Erasa.Video2.Worker.Core/Runtime/runtime-manifest.json').read_text(encoding='utf-8'))
     if 'advimman/lama/archive/786f5936b27fb3dacd2b1ad799e4de968ea697e7.zip' not in manifest['lamaSource']['url']:
         raise AssertionError('Original LaMa commit is not pinned.')
     result['pinned_upstream_commit'] = '786f5936b27fb3dacd2b1ad799e4de968ea697e7'
+
+
+    # Architecture 1.1 guards: tests never reference the executable host and CI is layered.
+    test_project = (ROOT / "tests" / "Erasa.Video2.Tests" / "Erasa.Video2.Tests.csproj").read_text(encoding="utf-8")
+    assert "Erasa.Video2.Worker.Core" in test_project
+    assert "Erasa.Video2.Worker.Host" not in test_project
+    host_files = sorted(path.name for path in (ROOT / "src" / "Erasa.Video2.Worker.Host").glob("*.cs"))
+    assert host_files == ["Program.cs"], host_files
+    assert (ROOT / "src" / "Erasa.Video2.Worker.Core" / "Services" / "WorkerProcessHost.cs").exists()
+    workflow = (ROOT / ".github" / "workflows" / "build-windows.yml").read_text(encoding="utf-8")
+    for job in ("source-checks:", "core-tests:", "worker-windows:", "lama-cpu:", "winui-windows:"):
+        assert job in workflow, job
+    core_test_block = workflow.split("core-tests:", 1)[1].split("worker-windows:", 1)[0]
+    assert "-p:Platform=x64" not in core_test_block
+    assert "--no-build" not in core_test_block
+    assert "Build complete solution" not in workflow
+    assert "Console.Error.OutputEncoding" not in (ROOT / "src" / "Erasa.Video2.Worker.Host" / "Program.cs").read_text(encoding="utf-8")
+    result["layered_ci_jobs"] = 5
+    result["worker_host_is_thin"] = True
 
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0

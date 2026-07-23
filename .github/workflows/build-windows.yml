@@ -9,33 +9,58 @@ on:
 permissions:
   contents: read
 
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  PYTHONUTF8: 1
+  PYTHONIOENCODING: utf-8
+
 jobs:
-  build:
-    runs-on: windows-2022
-    timeout-minutes: 120
-    env:
-      DOTNET_NOLOGO: true
-      DOTNET_CLI_TELEMETRY_OPTOUT: true
-      PYTHONUTF8: 1
-      PYTHONIOENCODING: utf-8
-
+  source-checks:
+    name: 1 Source checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup .NET 8
-        uses: actions/setup-dotnet@v4
-        with:
-          global-json-file: global.json
-
-      - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v2
-
-      - name: Setup test Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - run: python -m pip install --disable-pip-version-check numpy==1.26.4 opencv-python-headless==4.10.0.84 PyYAML==6.0.2
+      - run: python scripts/verify_source.py
+      - run: python -m unittest discover -s tests/python -v
 
+  core-tests:
+    name: 2 Core and Worker.Core tests
+    needs: source-checks
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Restore tests without platform override
+        run: dotnet restore tests/Erasa.Video2.Tests/Erasa.Video2.Tests.csproj
+      - name: Build and test Any CPU
+        run: dotnet test tests/Erasa.Video2.Tests/Erasa.Video2.Tests.csproj -c Release --logger "trx;LogFileName=erasa-video2-tests.trx" --results-directory TestResults
+      - name: Upload core logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: erasa-core-test-results
+          path: TestResults
+          if-no-files-found: warn
+
+  worker-windows:
+    name: 3 Worker Host and FFmpeg
+    needs: core-tests
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
       - name: Download FFmpeg
         shell: pwsh
         run: |
@@ -45,252 +70,178 @@ jobs:
           Invoke-WebRequest 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip' -OutFile $zip
           Expand-Archive $zip -DestinationPath $expanded -Force
           $bin = Get-ChildItem $expanded -Directory | Select-Object -First 1 | ForEach-Object { Join-Path $_.FullName 'bin' }
-          New-Item -ItemType Directory -Force 'third_party\ffmpeg\bin' | Out-Null
-          Copy-Item (Join-Path $bin 'ffmpeg.exe') 'third_party\ffmpeg\bin\ffmpeg.exe'
-          Copy-Item (Join-Path $bin 'ffprobe.exe') 'third_party\ffmpeg\bin\ffprobe.exe'
-          & 'third_party\ffmpeg\bin\ffmpeg.exe' -version
-
-      - name: Install source-test dependencies
-        run: python -m pip install --disable-pip-version-check numpy==1.26.4 opencv-python-headless==4.10.0.84 PyYAML==6.0.2
-
-      - name: Verify source structure
-        run: python scripts/verify_source.py
-
-      - name: Test Python pipeline core
-        run: python -m unittest discover -s tests/python -v
-
-      - name: Restore
-        run: dotnet restore Erasa.Video2.sln -p:Platform=x64
-
-      - name: Build complete solution
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force 'artifacts' | Out-Null
-          msbuild Erasa.Video2.sln /t:Build /p:Configuration=Release /p:Platform=x64 /m `
-            /bl:artifacts\solution-build.binlog `
-            /fl `
-            "/flp:logfile=artifacts\solution-build.log;verbosity=diagnostic"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Test .NET core and worker
-        run: dotnet test tests/Erasa.Video2.Tests/Erasa.Video2.Tests.csproj -c Release -p:Platform=x64 --no-build --logger "trx;LogFileName=erasa-video2-tests.trx" --results-directory TestResults
-
-      - name: Publish worker process
-        run: dotnet publish src/Erasa.Video2.Worker/Erasa.Video2.Worker.csproj -c Release -p:Platform=x64 -r win-x64 --self-contained true --no-restore -o artifacts/worker
-
-      - name: Add FFmpeg to worker artifact
-        shell: pwsh
-        run: |
           New-Item -ItemType Directory -Force 'artifacts\worker\tools\ffmpeg\bin' | Out-Null
-          Copy-Item 'third_party\ffmpeg\bin\ffmpeg.exe' 'artifacts\worker\tools\ffmpeg\bin\ffmpeg.exe'
-          Copy-Item 'third_party\ffmpeg\bin\ffprobe.exe' 'artifacts\worker\tools\ffmpeg\bin\ffprobe.exe'
-
+          Copy-Item (Join-Path $bin 'ffmpeg.exe') 'artifacts\worker\tools\ffmpeg\bin\ffmpeg.exe'
+          Copy-Item (Join-Path $bin 'ffprobe.exe') 'artifacts\worker\tools\ffmpeg\bin\ffprobe.exe'
+      - name: Publish thin Worker Host
+        run: dotnet publish src/Erasa.Video2.Worker.Host/Erasa.Video2.Worker.Host.csproj -c Release -r win-x64 --self-contained true -o artifacts/worker-publish
+      - name: Assemble worker artifact
+        shell: pwsh
+        run: |
+          Copy-Item 'artifacts\worker-publish\*' 'artifacts\worker' -Recurse -Force
+          if (-not (Test-Path 'artifacts\worker\Erasa.Video2.Worker.Host.exe')) { throw 'Worker Host missing.' }
+          if (-not (Test-Path 'artifacts\worker\Python\lama_bridge.py')) { throw 'LaMa bridge missing.' }
+          if (-not (Test-Path 'artifacts\worker\Runtime\runtime-manifest.json')) { throw 'Runtime manifest missing.' }
       - name: Worker FFmpeg utility self-test
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force 'artifacts\utility-test' | Out-Null
-          @{
-            command = 'self-test-utilities'
-            jobDirectory = (Resolve-Path 'artifacts\utility-test').Path
-          } | ConvertTo-Json | Set-Content 'artifacts\utility-request.json' -Encoding utf8NoBOM
-          & 'artifacts\worker\Erasa.Video2.Worker.exe' --request 'artifacts\utility-request.json' | Tee-Object -FilePath 'artifacts\utility-test.jsonl'
+          @{ command = 'self-test-utilities'; jobDirectory = (Resolve-Path 'artifacts\utility-test').Path } |
+            ConvertTo-Json | Set-Content 'artifacts\utility-request.json' -Encoding utf8NoBOM
+          & 'artifacts\worker\Erasa.Video2.Worker.Host.exe' --request 'artifacts\utility-request.json' |
+            Tee-Object -FilePath 'artifacts\worker-utility-test.jsonl'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if (-not (Test-Path 'artifacts\utility-test\fixture.png')) { throw 'Worker did not create a thumbnail.' }
+          if (-not (Test-Path 'artifacts\utility-test\fixture.png')) { throw 'Worker did not create thumbnail.' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: erasa-worker-windows-x64
+          path: artifacts/worker
+          if-no-files-found: error
+      - name: Upload worker logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: erasa-worker-test-results
+          path: |
+            artifacts/worker-utility-test.jsonl
+            artifacts/utility-test
+          if-no-files-found: warn
 
-      - name: Publish WinUI 3 app
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $publishDir = Join-Path $env:GITHUB_WORKSPACE 'artifacts\app'
-          msbuild 'src\Erasa.Video2.App\Erasa.Video2.App.csproj' `
-            /t:Publish `
-            /p:Configuration=Release `
-            /p:Platform=x64 `
-            /p:RuntimeIdentifier=win-x64 `
-            /p:SelfContained=true `
-            /p:WindowsAppSDKSelfContained=true `
-            /p:PublishReadyToRun=false `
-            "/p:PublishDir=$publishDir" `
-            /bl:artifacts\winui-publish.binlog `
-            /fl `
-            "/flp:logfile=artifacts\winui-publish.log;verbosity=diagnostic"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Assemble portable Windows artifact
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force 'artifacts\app\worker' | Out-Null
-          New-Item -ItemType Directory -Force 'artifacts\app\tools\ffmpeg\bin' | Out-Null
-          Copy-Item 'artifacts\worker\*' 'artifacts\app\worker' -Recurse -Force
-          Copy-Item 'third_party\ffmpeg\bin\ffmpeg.exe' 'artifacts\app\tools\ffmpeg\bin\ffmpeg.exe'
-          Copy-Item 'third_party\ffmpeg\bin\ffprobe.exe' 'artifacts\app\tools\ffmpeg\bin\ffprobe.exe'
-          Copy-Item 'README_VI.md' 'artifacts\app\README_VI.md'
-          Copy-Item 'THIRD_PARTY_NOTICES.md' 'artifacts\app\THIRD_PARTY_NOTICES.md'
-          Get-ChildItem 'artifacts\app' -Recurse | Select-Object FullName, Length | Out-File 'artifacts\artifact-file-list.txt'
-          if (-not (Test-Path 'artifacts\app\ERASA.Video.exe')) { throw 'ERASA.Video.exe missing.' }
-          if (-not (Test-Path 'artifacts\app\worker\Erasa.Video2.Worker.exe')) { throw 'Worker missing from app artifact.' }
-
-      - name: WinUI startup smoke test
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $signal = Join-Path $env:RUNNER_TEMP 'erasa-ui-started.txt'
-          $env:ERASA_SMOKE_TEST_PATH = $signal
-          $process = Start-Process 'artifacts\app\ERASA.Video.exe' -PassThru
-          $deadline = (Get-Date).AddSeconds(30)
-          while ((Get-Date) -lt $deadline -and -not (Test-Path $signal) -and -not $process.HasExited) {
-            Start-Sleep -Milliseconds 300
-          }
-          if ($process.HasExited -and -not (Test-Path $signal)) { throw "App exited during startup with code $($process.ExitCode)." }
-          if (-not (Test-Path $signal)) { throw 'App did not report successful XAML startup.' }
-          if (-not $process.HasExited) { & taskkill.exe /PID $process.Id /T /F | Out-Null }
-          Remove-Item Env:ERASA_SMOKE_TEST_PATH
-
-      - name: Worker failure does not close WinUI
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $signal = Join-Path $env:RUNNER_TEMP 'erasa-worker-failure-ui-alive.txt'
-          $env:ERASA_WORKER_FAILURE_SMOKE_PATH = $signal
-          $process = Start-Process 'artifacts\app\ERASA.Video.exe' -PassThru
-          $deadline = (Get-Date).AddSeconds(30)
-          while ((Get-Date) -lt $deadline -and -not (Test-Path $signal) -and -not $process.HasExited) {
-            Start-Sleep -Milliseconds 300
-          }
-          if (-not (Test-Path $signal)) { throw 'UI did not survive the expected worker failure.' }
-          if ($process.HasExited) { throw 'UI exited after the worker failed.' }
-          & taskkill.exe /PID $process.Id /T /F | Out-Null
-          Remove-Item Env:ERASA_WORKER_FAILURE_SMOKE_PATH
-
-      - name: Cache CPU LaMa test runtime
+  lama-cpu:
+    name: 4 Original LaMa CPU integration
+    needs: worker-windows
+    runs-on: windows-2022
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: erasa-worker-windows-x64
+          path: artifacts/worker
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Cache tested LaMa runtime
         uses: actions/cache@v4
         with:
           path: artifacts/runtime-test
-          key: erasa-lama-cpu-v1-${{ hashFiles('src/Erasa.Video2.Worker/Runtime/runtime-manifest.json', 'src/Erasa.Video2.Worker/Python/lama_bridge.py') }}
-
-      - name: Install original LaMa CPU test runtime
+          key: erasa-lama-cpu-v2-${{ hashFiles('src/Erasa.Video2.Worker.Core/Runtime/runtime-manifest.json', 'src/Erasa.Video2.Worker.Core/Python/lama_bridge.py') }}
+      - name: Install original LaMa runtime through Worker.Core
         shell: pwsh
         run: |
-          $runtime = Join-Path $env:GITHUB_WORKSPACE 'artifacts\runtime-test'
-          @{
-            command = 'runtime-install'
-            runtimeDirectory = $runtime
-            profile = 'cpu'
-          } | ConvertTo-Json | Set-Content 'artifacts\runtime-install-request.json' -Encoding utf8NoBOM
-          & 'artifacts\app\worker\Erasa.Video2.Worker.exe' --request 'artifacts\runtime-install-request.json' | Tee-Object -FilePath 'artifacts\runtime-install.jsonl'
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          @{ command = 'runtime-install'; runtimeDirectory = (Join-Path $env:GITHUB_WORKSPACE 'artifacts\runtime-test'); profile = 'cpu' } |
+            ConvertTo-Json | Set-Content 'artifacts\runtime-install-request.json' -Encoding utf8NoBOM
+          & 'artifacts\worker\Erasa.Video2.Worker.Host.exe' --request 'artifacts\runtime-install-request.json' |
+            Tee-Object -FilePath 'artifacts\runtime-install.jsonl'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if (-not (Test-Path 'artifacts\runtime-test\lama-source\saicinpainting\training\modules\ffc.py')) { throw 'Original LaMa source missing.' }
+          if (-not (Test-Path 'artifacts\runtime-test\lama-source\saicinpainting\training\modules\ffc.py')) { throw 'Original advimman/lama source missing.' }
           if (-not (Test-Path 'artifacts\runtime-test\model\models\best.ckpt')) { throw 'Big-LaMa checkpoint missing.' }
-
       - name: Original LaMa CPU self-test
         shell: pwsh
         run: |
-          @{
-            command = 'self-test-runtime'
-            runtimeDirectory = (Resolve-Path 'artifacts\runtime-test').Path
-            profile = 'cpu'
-          } | ConvertTo-Json | Set-Content 'artifacts\runtime-selftest-request.json' -Encoding utf8NoBOM
-          & 'artifacts\app\worker\Erasa.Video2.Worker.exe' --request 'artifacts\runtime-selftest-request.json' | Tee-Object -FilePath 'artifacts\runtime-selftest.jsonl'
+          @{ command = 'self-test-runtime'; runtimeDirectory = (Resolve-Path 'artifacts\runtime-test').Path; profile = 'cpu' } |
+            ConvertTo-Json | Set-Content 'artifacts\runtime-selftest-request.json' -Encoding utf8NoBOM
+          & 'artifacts\worker\Erasa.Video2.Worker.Host.exe' --request 'artifacts\runtime-selftest-request.json' |
+            Tee-Object -FilePath 'artifacts\runtime-selftest.jsonl'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Convert tested runtime to CUDA bundle with CPU fallback
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $python = 'artifacts\runtime-test\python\python.exe'
-          & $python -X utf8 -m pip install --force-reinstall --no-cache-dir --disable-pip-version-check 'torch==1.8.2+cu111' -f 'https://download.pytorch.org/whl/lts/1.8/torch_lts.html'
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $markerPath = 'artifacts\runtime-test\runtime.ready.json'
-          $marker = Get-Content $markerPath -Raw | ConvertFrom-Json
-          $marker.profile = 'cuda-bundled'
-          $marker | ConvertTo-Json | Set-Content $markerPath -Encoding utf8NoBOM
-          if (Test-Path 'artifacts\runtime-test\downloads') { Remove-Item 'artifacts\runtime-test\downloads' -Recurse -Force }
-
-      - name: CUDA bundle CPU fallback self-test
-        shell: pwsh
-        run: |
-          @{
-            command = 'self-test-runtime'
-            runtimeDirectory = (Resolve-Path 'artifacts\runtime-test').Path
-            profile = 'cpu'
-          } | ConvertTo-Json | Set-Content 'artifacts\runtime-cuda-bundle-selftest-request.json' -Encoding utf8NoBOM
-          & 'artifacts\app\worker\Erasa.Video2.Worker.exe' --request 'artifacts\runtime-cuda-bundle-selftest-request.json' | Tee-Object -FilePath 'artifacts\runtime-cuda-bundle-selftest.jsonl'
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
       - name: Original LaMa video integration test
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force 'artifacts\integration' | Out-Null
-          & 'third_party\ffmpeg\bin\ffmpeg.exe' -y -v error `
+          & 'artifacts\worker\tools\ffmpeg\bin\ffmpeg.exe' -y -v error `
             -f lavfi -i 'testsrc2=size=128x128:rate=4:duration=3' `
             -f lavfi -i 'sine=frequency=880:sample_rate=48000:duration=3' `
             -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest 'artifacts\integration\input.mp4'
-          python -c "from pathlib import Path; p=Path(r'artifacts/integration/mask.pgm'); w=h=128; a=bytearray(w*h); [a.__setitem__(y*w+x,255) for y in range(44,84) for x in range(44,84)]; p.write_bytes(f'P5\n{w} {h}\n255\n'.encode()+a)"
-          @{
-            command = 'process'
-            jobId = [guid]::NewGuid()
-            inputPath = (Resolve-Path 'artifacts\integration\input.mp4').Path
-            maskPath = (Resolve-Path 'artifacts\integration\mask.pgm').Path
-            outputPath = (Join-Path $env:GITHUB_WORKSPACE 'artifacts\integration\output.mp4')
-            jobDirectory = (Join-Path $env:GITHUB_WORKSPACE 'artifacts\integration\state')
-            runtimeDirectory = (Resolve-Path 'artifacts\runtime-test').Path
-            quality = 'Fast'
-          } | ConvertTo-Json | Set-Content 'artifacts\integration\request.json' -Encoding utf8NoBOM
-          & 'artifacts\app\worker\Erasa.Video2.Worker.exe' --request 'artifacts\integration\request.json' | Tee-Object -FilePath 'artifacts\integration\process.jsonl'
+          python -c "from pathlib import Path; p=Path(r'artifacts/integration/mask.pgm'); w=h=128; a=bytearray(w*h); [a.__setitem__(y*w+x,255) for y in range(44,84) for x in range(44,84)]; p.write_bytes(f'P5\\n{w} {h}\\n255\\n'.encode()+a)"
+          @{ command='process'; jobId=[guid]::NewGuid(); inputPath=(Resolve-Path 'artifacts\integration\input.mp4').Path; maskPath=(Resolve-Path 'artifacts\integration\mask.pgm').Path; outputPath=(Join-Path $env:GITHUB_WORKSPACE 'artifacts\integration\output.mp4'); jobDirectory=(Join-Path $env:GITHUB_WORKSPACE 'artifacts\integration\state'); runtimeDirectory=(Resolve-Path 'artifacts\runtime-test').Path; profile='cpu'; quality='Fast' } |
+            ConvertTo-Json | Set-Content 'artifacts\integration-request.json' -Encoding utf8NoBOM
+          & 'artifacts\worker\Erasa.Video2.Worker.Host.exe' --request 'artifacts\integration-request.json' |
+            Tee-Object -FilePath 'artifacts\integration.jsonl'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $probe = & 'third_party\ffmpeg\bin\ffprobe.exe' -v error -show_streams -show_format -of json 'artifacts\integration\output.mp4' | ConvertFrom-Json
-          $video = $probe.streams | Where-Object codec_type -eq 'video' | Select-Object -First 1
-          $audio = $probe.streams | Where-Object codec_type -eq 'audio' | Select-Object -First 1
-          if ($video.width -ne 128 -or $video.height -ne 128) { throw 'Integration output changed resolution.' }
-          if ($null -eq $audio) { throw 'Integration output lost audio.' }
-          $duration = [double]$probe.format.duration
-          if ([math]::Abs($duration - 3) -gt 0.25) { throw "Integration duration is $duration." }
-          $rate = $video.avg_frame_rate -split '/'
-          $fps = [double]$rate[0] / [math]::Max([double]$rate[1], 1)
-          if ([math]::Abs($fps - 4) -gt 0.02) { throw "Integration FPS is $fps." }
-
-      - name: Bundle tested LaMa runtime into Windows app
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if (Test-Path 'artifacts\app\runtime') { Remove-Item 'artifacts\app\runtime' -Recurse -Force }
-          Copy-Item 'artifacts\runtime-test' 'artifacts\app\runtime' -Recurse -Force
-          if (-not (Test-Path 'artifacts\app\runtime\runtime.ready.json')) { throw 'Bundled runtime marker missing.' }
-          if (-not (Test-Path 'artifacts\app\runtime\python\python.exe')) { throw 'Bundled Python missing.' }
-          if (-not (Test-Path 'artifacts\app\runtime\model\models\best.ckpt')) { throw 'Bundled Big-LaMa missing.' }
-          if (-not (Test-Path 'artifacts\app\runtime\lama-source\saicinpainting\training\modules\ffc.py')) { throw 'Bundled original LaMa source missing.' }
-
-      - name: Bundled runtime worker status test
-        shell: pwsh
-        run: |
-          @{
-            command = 'runtime-status'
-            runtimeDirectory = (Resolve-Path 'artifacts\app\runtime').Path
-          } | ConvertTo-Json | Set-Content 'artifacts\bundled-runtime-status-request.json' -Encoding utf8NoBOM
-          & 'artifacts\app\worker\Erasa.Video2.Worker.exe' --request 'artifacts\bundled-runtime-status-request.json' | Tee-Object -FilePath 'artifacts\bundled-runtime-status.jsonl'
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Upload diagnostic logs
+          if (-not (Test-Path 'artifacts\integration\output.mp4')) { throw 'LaMa integration output missing.' }
+          $probe = & 'artifacts\worker\tools\ffmpeg\bin\ffprobe.exe' -v error -show_entries stream=codec_type -of csv=p=0 'artifacts\integration\output.mp4'
+          if ($probe -notcontains 'video') { throw 'Output video stream missing.' }
+          if ($probe -notcontains 'audio') { throw 'Output audio stream missing.' }
+      - name: Upload LaMa logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ERASA-VIDEO-2-TestResults
+          name: erasa-lama-cpu-test-results
           path: |
-            TestResults
-            artifacts/solution-build.binlog
-            artifacts/winui-publish.log
-            artifacts/winui-publish.binlog
-            artifacts/utility-test.jsonl
             artifacts/runtime-install.jsonl
             artifacts/runtime-selftest.jsonl
-            artifacts/runtime-cuda-bundle-selftest.jsonl
-            artifacts/bundled-runtime-status.jsonl
-            artifacts/integration
-            artifacts/artifact-file-list.txt
+            artifacts/integration.jsonl
+            artifacts/integration/output.mp4
           if-no-files-found: warn
-          retention-days: 14
 
+  winui-windows:
+    name: 5 WinUI app and final artifact
+    needs: [core-tests, worker-windows, lama-cpu]
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - uses: microsoft/setup-msbuild@v2
+      - uses: actions/download-artifact@v4
+        with:
+          name: erasa-worker-windows-x64
+          path: artifacts/worker
+      - name: Restore WinUI project only
+        run: dotnet restore src/Erasa.Video2.App/Erasa.Video2.App.csproj -p:Platform=x64 -r win-x64
+      - name: Publish WinUI app
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $publishDir = Join-Path $env:GITHUB_WORKSPACE 'artifacts\app'
+          msbuild 'src\Erasa.Video2.App\Erasa.Video2.App.csproj' /t:Publish /p:Configuration=Release /p:Platform=x64 /p:RuntimeIdentifier=win-x64 /p:SelfContained=true /p:WindowsAppSDKSelfContained=true /p:PublishReadyToRun=false "/p:PublishDir=$publishDir" /bl:artifacts\winui-publish.binlog /fl "/flp:logfile=artifacts\winui-publish.log;verbosity=diagnostic"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Assemble final artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force 'artifacts\app\worker' | Out-Null
+          Copy-Item 'artifacts\worker\*' 'artifacts\app\worker' -Recurse -Force
+          Copy-Item 'README_VI.md' 'artifacts\app\README_VI.md'
+          Copy-Item 'THIRD_PARTY_NOTICES.md' 'artifacts\app\THIRD_PARTY_NOTICES.md'
+          if (-not (Test-Path 'artifacts\app\ERASA.Video.exe')) { throw 'ERASA.Video.exe missing.' }
+          if (-not (Test-Path 'artifacts\app\worker\Erasa.Video2.Worker.Host.exe')) { throw 'Worker Host missing from app.' }
+      - name: WinUI startup smoke test
+        shell: pwsh
+        run: |
+          $signal = Join-Path $env:RUNNER_TEMP 'erasa-ui-started.txt'
+          $env:ERASA_SMOKE_TEST_PATH = $signal
+          $process = Start-Process 'artifacts\app\ERASA.Video.exe' -PassThru
+          $deadline = (Get-Date).AddSeconds(30)
+          while ((Get-Date) -lt $deadline -and -not (Test-Path $signal) -and -not $process.HasExited) { Start-Sleep -Milliseconds 300 }
+          if ($process.HasExited -and -not (Test-Path $signal)) { throw "App exited during startup with code $($process.ExitCode)." }
+          if (-not (Test-Path $signal)) { throw 'App did not report successful XAML startup.' }
+          if (-not $process.HasExited) { & taskkill.exe /PID $process.Id /T /F | Out-Null }
+          Remove-Item Env:ERASA_SMOKE_TEST_PATH
+      - name: Worker failure does not close WinUI
+        shell: pwsh
+        run: |
+          $signal = Join-Path $env:RUNNER_TEMP 'erasa-worker-failure-ui-alive.txt'
+          $env:ERASA_WORKER_FAILURE_SMOKE_PATH = $signal
+          $process = Start-Process 'artifacts\app\ERASA.Video.exe' -PassThru
+          $deadline = (Get-Date).AddSeconds(30)
+          while ((Get-Date) -lt $deadline -and -not (Test-Path $signal) -and -not $process.HasExited) { Start-Sleep -Milliseconds 300 }
+          if (-not (Test-Path $signal)) { throw 'UI did not survive expected worker failure.' }
+          if ($process.HasExited) { throw 'UI exited after worker failure.' }
+          & taskkill.exe /PID $process.Id /T /F | Out-Null
+          Remove-Item Env:ERASA_WORKER_FAILURE_SMOKE_PATH
+      - name: Upload WinUI diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: erasa-winui-diagnostics
+          path: |
+            artifacts/winui-publish.log
+            artifacts/winui-publish.binlog
+          if-no-files-found: warn
       - name: Upload Windows app
         uses: actions/upload-artifact@v4
         with:

@@ -1,4 +1,4 @@
-namespace Erasa.Video2.Worker.Services;
+namespace Erasa.Video2.Worker.Core.Services;
 
 public static class ToolPaths
 {
