@@ -1,22 +1,14 @@
 # Changelog
 
-## 0.3.0 — functional editor rebuild
+## 1.0.0
 
-- Decoupled media probe, thumbnail and timeline frame extraction from Python/LaMa.
-- Added packaged FFmpeg media service and its real integration test.
-- Added separate utility-runtime and original-LaMa runtime diagnostics.
-- Added explicit mask confirmation gate before preview/process.
-- Rebuilt editor fit/zoom/pan behavior and reduced mask overlay opacity.
-- Reworked queue cards, full error panel, retry-load and open-log actions.
-- Fixed stale queue errors and tab switching behavior.
-- Added artifact runtime diagnostics and desktop startup smoke test.
-- Added tests for media metadata, thumbnail generation and mask-confirmation policy.
-
-## 0.2.0 — clean rebuild
-
-- Rebuilt the app shell as ERASA VIDEO with supplied brand assets.
-- Uses original `advimman/lama` source and original checkpoint layout directly.
-- Added Video/Image tabs, file/folder import, drag/drop and persistent queue.
-- Added brush, eraser, rectangle, ellipse, pan, softness, undo/redo/reset and zoom.
-- Added separate worker process, logs, pause/cancel/retry/resume and segment checkpoints.
-- Added output contract checks for video dimensions, FPS, duration and audio.
+- Bỏ toàn bộ kiến trúc Avalonia/PySide6/WinUI prototype trước.
+- Tạo project mới .NET 8 + WinUI 3.
+- Worker video chạy process riêng.
+- FFmpeg hoạt động độc lập với runtime LaMa để preview nguồn luôn dùng được.
+- Mask editor mới: brush, eraser, rectangle, ellipse, pan, zoom, undo, redo, reset, soft mask.
+- State machine bắt buộc xác nhận mask trước Preview/Xử lý.
+- Artifact Windows đóng gói sẵn Python nhúng, PyTorch CUDA có CPU fallback, source gốc `advimman/lama` và Big-LaMa.
+- Temporal reconstruction là chính cho video; LaMa chỉ fallback ở pixel thiếu confidence.
+- Queue có pause, cancel, retry và resume theo segment.
+- GitHub Actions có build solution, UI startup smoke, LaMa CPU self-test và video integration test.

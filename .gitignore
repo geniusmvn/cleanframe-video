@@ -1,12 +1,9 @@
+bin/
+obj/
 .vs/
-**/bin/
-**/obj/
-artifacts/
 TestResults/
-.runtime/
+artifacts/
 *.user
 *.suo
-*.log
-*.tmp
-*.temp
-*.zip
+*.binlog
+runtime-cache/

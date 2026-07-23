@@ -1,0 +1,25 @@
+{
+  "version": "1.0.0",
+  "python": {
+    "url": "https://www.python.org/ftp/python/3.8.10/python-3.8.10-embed-amd64.zip"
+  },
+  "getPip": {
+    "url": "https://bootstrap.pypa.io/pip/3.8/get-pip.py"
+  },
+  "lamaSource": {
+    "url": "https://github.com/advimman/lama/archive/786f5936b27fb3dacd2b1ad799e4de968ea697e7.zip"
+  },
+  "model": {
+    "url": "https://huggingface.co/smartywu/big-lama/resolve/05cb2be7f8dbe6ca7c6e78f4fc827a4b2baaa4a9/big-lama.zip?download=true",
+    "sha256": "f1b358ca24093b93a106183b98a3dea6e8ed09f3b43ea7251eb2c81e7b4575f6"
+  },
+  "basePackages": [
+    "numpy==1.24.4",
+    "opencv-python-headless==4.8.1.78",
+    "PyYAML==6.0.1",
+    "kornia==0.5.0"
+  ],
+  "torchCpu": "torch==1.8.2+cpu",
+  "torchCuda": "torch==1.8.2+cu111",
+  "torchFindLinks": "https://download.pytorch.org/whl/lts/1.8/torch_lts.html"
+}

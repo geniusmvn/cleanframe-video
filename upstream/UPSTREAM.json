@@ -1,9 +1,8 @@
 {
   "repository": "https://github.com/advimman/lama",
   "commit": "786f5936b27fb3dacd2b1ad799e4de968ea697e7",
-  "inference_entry_reference": "bin/predict.py",
-  "model_url": "https://huggingface.co/smartywu/big-lama/resolve/05cb2be7f8dbe6ca7c6e78f4fc827a4b2baaa4a9/big-lama.zip?download=true",
-  "model_sha256": "f1b358ca24093b93a106183b98a3dea6e8ed09f3b43ea7251eb2c81e7b4575f6",
-  "model_size_bytes": 381428720,
-  "license": "Apache-2.0"
+  "entry_source": "saicinpainting/training/modules/ffc.py",
+  "model_archive": "https://huggingface.co/smartywu/big-lama/resolve/05cb2be7f8dbe6ca7c6e78f4fc827a4b2baaa4a9/big-lama.zip?download=true",
+  "integration": "Direct import of original FFCResNetGenerator; no ONNX or TorchScript conversion",
+  "model_sha256": "f1b358ca24093b93a106183b98a3dea6e8ed09f3b43ea7251eb2c81e7b4575f6"
 }

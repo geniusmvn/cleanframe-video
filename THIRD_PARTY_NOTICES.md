@@ -2,23 +2,20 @@
 
 ## LaMa
 
-- Project: `advimman/lama`
+- Repository: `https://github.com/advimman/lama`
 - Pinned commit: `786f5936b27fb3dacd2b1ad799e4de968ea697e7`
 - License: Apache License 2.0
-- Copyright notice from upstream must be retained in the packaged `runtime/lama/LICENSE`.
 
-## big-lama checkpoint
-
-The build downloads the model package referenced by the upstream LaMa README. The model host credits the original LaMa authors and declares Apache-2.0.
-
-## Avalonia
-
-Avalonia UI packages are MIT licensed.
+ERASA VIDEO downloads the upstream source at runtime and imports the original `FFCResNetGenerator` implementation. The upstream LICENSE remains inside the downloaded runtime.
 
 ## FFmpeg
 
-The build downloads an FFmpeg Windows essentials distribution. Redistributors must review the codec configuration and applicable LGPL/GPL terms before public distribution.
+FFmpeg is downloaded by GitHub Actions from the Gyan Windows builds and included in the Windows artifact. Users and redistributors must comply with the licensing terms of the particular FFmpeg build.
 
-## PyTorch and Python
+## PyTorch, OpenCV, NumPy, Kornia, PyYAML
 
-Their respective licenses and notices are copied into the Windows artifact where available.
+These packages are installed into the application-local embedded Python runtime on first use. Their respective upstream licenses apply.
+
+## Microsoft Windows App SDK
+
+The desktop UI uses Microsoft Windows App SDK / WinUI 3 under Microsoft's applicable license terms.
