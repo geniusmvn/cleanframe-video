@@ -46,6 +46,7 @@ def main() -> int:
         'src/Erasa.Video2.Worker.Core/Python/lama_bridge.py',
         'src/Erasa.Video2.Worker.Core/Runtime/runtime-manifest.json',
         'tests/Erasa.Video2.Tests/MaskRasterizerTests.cs',
+        'scripts/prepare_lama_runtime.py',
         '.github/workflows/build-windows.yml',
     ]
     for relative in required:
@@ -65,8 +66,10 @@ def main() -> int:
     result['workflow_yaml'] = True
 
     bridge_path = ROOT / 'src/Erasa.Video2.Worker.Core/Python/lama_bridge.py'
+    runtime_builder_path = ROOT / 'scripts/prepare_lama_runtime.py'
     ast.parse(bridge_path.read_text(encoding='utf-8'), filename=str(bridge_path))
-    result['python_ast'] = True
+    ast.parse(runtime_builder_path.read_text(encoding='utf-8'), filename=str(runtime_builder_path))
+    result['python_ast'] = 2
 
     csharp_files = sorted(ROOT.rglob('*.cs'))
     for path in csharp_files:
@@ -124,10 +127,10 @@ def main() -> int:
     result['mask_tools'] = 5
 
     workflow_text = (ROOT / '.github/workflows/build-windows.yml').read_text(encoding='utf-8')
-    for step in ['Build and test Any CPU', 'Worker FFmpeg utility self-test', 'WinUI startup smoke test', 'Original LaMa CPU self-test', 'Original LaMa video integration test']:
+    for step in ['Build and test Any CPU', 'Worker FFmpeg utility self-test', 'Prepare bundled original LaMa runtime', 'Original LaMa Worker.Core self-test', 'Original LaMa video integration test', 'Bundled runtime status test', 'WinUI startup smoke test']:
         if step not in workflow_text:
             raise AssertionError(f'Missing CI proof step: {step}')
-    result['ci_proof_steps'] = 5
+    result['ci_proof_steps'] = 7
 
     manifest = json.loads((ROOT / 'src/Erasa.Video2.Worker.Core/Runtime/runtime-manifest.json').read_text(encoding='utf-8'))
     if 'advimman/lama/archive/786f5936b27fb3dacd2b1ad799e4de968ea697e7.zip' not in manifest['lamaSource']['url']:
@@ -152,6 +155,28 @@ def main() -> int:
     assert "Console.Error.OutputEncoding" not in (ROOT / "src" / "Erasa.Video2.Worker.Host" / "Program.cs").read_text(encoding="utf-8")
     result["layered_ci_jobs"] = 5
     result["worker_host_is_thin"] = True
+
+    # Architecture 1.2 guards: runtime is prepared once in CI, tested, transferred as an artifact, and bundled.
+    runtime_builder = runtime_builder_path.read_text(encoding="utf-8")
+    for token in ("safe_extract_zip", "torchCuda", "selftest", "runtime.ready.json"):
+        if token not in runtime_builder:
+            raise AssertionError(f"Runtime builder missing token: {token}")
+    if "runtime-install" in workflow_text:
+        raise AssertionError("CI still invokes the unreliable runtime-install worker command.")
+    for token in (
+        "name: erasa-lama-runtime-windows-x64",
+        "name: erasa-lama-runtime-windows-x64",
+        "path: artifacts/runtime-test",
+        "path: artifacts/runtime",
+        "Copy-Item 'artifacts\\runtime\\*' 'artifacts\\app\\runtime'",
+    ):
+        if token not in workflow_text:
+            raise AssertionError(f"Bundled runtime artifact wiring missing: {token}")
+    if "WorkerCommands.RuntimeInstall" in code:
+        raise AssertionError("WinUI still attempts to install Python/model at runtime.")
+    if "ứng dụng không tự cài Python hoặc model" not in code:
+        raise AssertionError("Missing explicit bundled-runtime UI behavior.")
+    result["bundled_tested_runtime"] = True
 
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0

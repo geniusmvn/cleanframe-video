@@ -1,0 +1,6 @@
+Sửa CI/runtime ERASA VIDEO 2 1.2.0.
+
+Chép toàn bộ nội dung bản vá vào gốc repo và chọn Replace.
+Commit: Bundle tested LaMa runtime
+
+Bản vá bỏ cài runtime qua worker trong CI, tạo runtime bằng script riêng, test runtime trước rồi chuyển đúng runtime đó sang artifact WinUI.

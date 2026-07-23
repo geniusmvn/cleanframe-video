@@ -108,10 +108,10 @@ jobs:
           if-no-files-found: warn
 
   lama-cpu:
-    name: 4 Original LaMa CPU integration
+    name: 4 Original LaMa runtime and integration
     needs: worker-windows
     runs-on: windows-2022
-    timeout-minutes: 75
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -121,28 +121,47 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Verify downloaded worker artifact
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $worker = Get-ChildItem 'artifacts\worker' -Filter 'Erasa.Video2.Worker.Host.exe' -File -Recurse | Select-Object -First 1
+          if ($null -eq $worker) { throw 'Worker Host missing after artifact download.' }
+          $script:WorkerExe = $worker.FullName
+          $bridge = Join-Path $worker.Directory.FullName 'Python\lama_bridge.py'
+          $manifest = Join-Path $worker.Directory.FullName 'Runtime\runtime-manifest.json'
+          if (-not (Test-Path $bridge)) { throw 'LaMa bridge missing after artifact download.' }
+          if (-not (Test-Path $manifest)) { throw 'Runtime manifest missing after artifact download.' }
+          "WORKER_EXE=$($worker.FullName)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "LAMA_BRIDGE=$bridge" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "RUNTIME_MANIFEST=$manifest" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
       - name: Cache tested LaMa runtime
         uses: actions/cache@v4
         with:
           path: artifacts/runtime-test
-          key: erasa-lama-cpu-v2-${{ hashFiles('src/Erasa.Video2.Worker.Core/Runtime/runtime-manifest.json', 'src/Erasa.Video2.Worker.Core/Python/lama_bridge.py') }}
-      - name: Install original LaMa runtime through Worker.Core
+          key: erasa-lama-cuda-v3-${{ hashFiles('src/Erasa.Video2.Worker.Core/Runtime/runtime-manifest.json', 'src/Erasa.Video2.Worker.Core/Python/lama_bridge.py', 'scripts/prepare_lama_runtime.py') }}
+      - name: Prepare bundled original LaMa runtime
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force artifacts | Out-Null
-          @{ command = 'runtime-install'; runtimeDirectory = (Join-Path $env:GITHUB_WORKSPACE 'artifacts\runtime-test'); profile = 'cpu' } |
-            ConvertTo-Json | Set-Content 'artifacts\runtime-install-request.json' -Encoding utf8NoBOM
-          & 'artifacts\worker\Erasa.Video2.Worker.Host.exe' --request 'artifacts\runtime-install-request.json' |
-            Tee-Object -FilePath 'artifacts\runtime-install.jsonl'
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force 'artifacts' | Out-Null
+          python scripts/prepare_lama_runtime.py `
+            --runtime 'artifacts/runtime-test' `
+            --manifest $env:RUNTIME_MANIFEST `
+            --bridge $env:LAMA_BRIDGE `
+            --profile cuda 2>&1 | Tee-Object -FilePath 'artifacts/runtime-prepare.log'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path 'artifacts\runtime-test\runtime.ready.json')) { throw 'Runtime ready marker missing.' }
+          if (-not (Test-Path 'artifacts\runtime-test\python\python.exe')) { throw 'Embedded Python missing.' }
           if (-not (Test-Path 'artifacts\runtime-test\lama-source\saicinpainting\training\modules\ffc.py')) { throw 'Original advimman/lama source missing.' }
           if (-not (Test-Path 'artifacts\runtime-test\model\models\best.ckpt')) { throw 'Big-LaMa checkpoint missing.' }
-      - name: Original LaMa CPU self-test
+      - name: Original LaMa Worker.Core self-test
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           @{ command = 'self-test-runtime'; runtimeDirectory = (Resolve-Path 'artifacts\runtime-test').Path; profile = 'cpu' } |
             ConvertTo-Json | Set-Content 'artifacts\runtime-selftest-request.json' -Encoding utf8NoBOM
-          & 'artifacts\worker\Erasa.Video2.Worker.Host.exe' --request 'artifacts\runtime-selftest-request.json' |
+          & $env:WORKER_EXE --request 'artifacts\runtime-selftest-request.json' 2>&1 |
             Tee-Object -FilePath 'artifacts\runtime-selftest.jsonl'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Original LaMa video integration test
@@ -150,27 +169,39 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force 'artifacts\integration' | Out-Null
-          & 'artifacts\worker\tools\ffmpeg\bin\ffmpeg.exe' -y -v error `
+          $ffmpeg = Get-ChildItem 'artifacts\worker' -Filter 'ffmpeg.exe' -File -Recurse | Select-Object -First 1
+          $ffprobe = Get-ChildItem 'artifacts\worker' -Filter 'ffprobe.exe' -File -Recurse | Select-Object -First 1
+          if ($null -eq $ffmpeg -or $null -eq $ffprobe) { throw 'FFmpeg tools missing from worker artifact.' }
+          & $ffmpeg.FullName -y -v error `
             -f lavfi -i 'testsrc2=size=128x128:rate=4:duration=3' `
             -f lavfi -i 'sine=frequency=880:sample_rate=48000:duration=3' `
             -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest 'artifacts\integration\input.mp4'
-          python -c "from pathlib import Path; p=Path(r'artifacts/integration/mask.pgm'); w=h=128; a=bytearray(w*h); [a.__setitem__(y*w+x,255) for y in range(44,84) for x in range(44,84)]; p.write_bytes(f'P5\\n{w} {h}\\n255\\n'.encode()+a)"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -c "from pathlib import Path; p=Path(r'artifacts/integration/mask.pgm'); w=h=128; a=bytearray(w*h); [a.__setitem__(y*w+x,255) for y in range(44,84) for x in range(44,84)]; p.write_bytes(f'P5\n{w} {h}\n255\n'.encode()+a)"
           @{ command='process'; jobId=[guid]::NewGuid(); inputPath=(Resolve-Path 'artifacts\integration\input.mp4').Path; maskPath=(Resolve-Path 'artifacts\integration\mask.pgm').Path; outputPath=(Join-Path $env:GITHUB_WORKSPACE 'artifacts\integration\output.mp4'); jobDirectory=(Join-Path $env:GITHUB_WORKSPACE 'artifacts\integration\state'); runtimeDirectory=(Resolve-Path 'artifacts\runtime-test').Path; profile='cpu'; quality='Fast' } |
             ConvertTo-Json | Set-Content 'artifacts\integration-request.json' -Encoding utf8NoBOM
-          & 'artifacts\worker\Erasa.Video2.Worker.Host.exe' --request 'artifacts\integration-request.json' |
+          & $env:WORKER_EXE --request 'artifacts\integration-request.json' 2>&1 |
             Tee-Object -FilePath 'artifacts\integration.jsonl'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Test-Path 'artifacts\integration\output.mp4')) { throw 'LaMa integration output missing.' }
-          $probe = & 'artifacts\worker\tools\ffmpeg\bin\ffprobe.exe' -v error -show_entries stream=codec_type -of csv=p=0 'artifacts\integration\output.mp4'
+          $probe = & $ffprobe.FullName -v error -show_entries stream=codec_type -of csv=p=0 'artifacts\integration\output.mp4'
           if ($probe -notcontains 'video') { throw 'Output video stream missing.' }
           if ($probe -notcontains 'audio') { throw 'Output audio stream missing.' }
-      - name: Upload LaMa logs
+      - name: Upload tested LaMa runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: erasa-lama-runtime-windows-x64
+          path: artifacts/runtime-test
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+      - name: Upload LaMa diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: erasa-lama-cpu-test-results
           path: |
-            artifacts/runtime-install.jsonl
+            artifacts/runtime-prepare.log
             artifacts/runtime-selftest.jsonl
             artifacts/integration.jsonl
             artifacts/integration/output.mp4
@@ -180,7 +211,7 @@ jobs:
     name: 5 WinUI app and final artifact
     needs: [core-tests, worker-windows, lama-cpu]
     runs-on: windows-2022
-    timeout-minutes: 35
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -191,27 +222,52 @@ jobs:
         with:
           name: erasa-worker-windows-x64
           path: artifacts/worker
+      - uses: actions/download-artifact@v4
+        with:
+          name: erasa-lama-runtime-windows-x64
+          path: artifacts/runtime
       - name: Restore WinUI project only
         run: dotnet restore src/Erasa.Video2.App/Erasa.Video2.App.csproj -p:Platform=x64 -r win-x64
       - name: Publish WinUI app
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force 'artifacts' | Out-Null
           $publishDir = Join-Path $env:GITHUB_WORKSPACE 'artifacts\app'
           msbuild 'src\Erasa.Video2.App\Erasa.Video2.App.csproj' /t:Publish /p:Configuration=Release /p:Platform=x64 /p:RuntimeIdentifier=win-x64 /p:SelfContained=true /p:WindowsAppSDKSelfContained=true /p:PublishReadyToRun=false "/p:PublishDir=$publishDir" /bl:artifacts\winui-publish.binlog /fl "/flp:logfile=artifacts\winui-publish.log;verbosity=diagnostic"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Assemble final artifact
+      - name: Assemble final portable artifact
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force 'artifacts\app\worker' | Out-Null
+          New-Item -ItemType Directory -Force 'artifacts\app\runtime' | Out-Null
           Copy-Item 'artifacts\worker\*' 'artifacts\app\worker' -Recurse -Force
+          Copy-Item 'artifacts\runtime\*' 'artifacts\app\runtime' -Recurse -Force
           Copy-Item 'README_VI.md' 'artifacts\app\README_VI.md'
           Copy-Item 'THIRD_PARTY_NOTICES.md' 'artifacts\app\THIRD_PARTY_NOTICES.md'
           if (-not (Test-Path 'artifacts\app\ERASA.Video.exe')) { throw 'ERASA.Video.exe missing.' }
           if (-not (Test-Path 'artifacts\app\worker\Erasa.Video2.Worker.Host.exe')) { throw 'Worker Host missing from app.' }
+          if (-not (Test-Path 'artifacts\app\runtime\runtime.ready.json')) { throw 'Tested LaMa runtime missing from app.' }
+          if (-not (Test-Path 'artifacts\app\runtime\python\python.exe')) { throw 'Embedded Python missing from app.' }
+          if (-not (Test-Path 'artifacts\app\runtime\model\models\best.ckpt')) { throw 'Big-LaMa checkpoint missing from app.' }
+      - name: Bundled runtime status test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          @{ command = 'runtime-status'; runtimeDirectory = (Resolve-Path 'artifacts\app\runtime').Path } |
+            ConvertTo-Json | Set-Content 'artifacts\bundled-runtime-request.json' -Encoding utf8NoBOM
+          & 'artifacts\app\worker\Erasa.Video2.Worker.Host.exe' --request 'artifacts\bundled-runtime-request.json' 2>&1 |
+            Tee-Object -FilePath 'artifacts\bundled-runtime-status.jsonl'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $lastJson = Get-Content 'artifacts\bundled-runtime-status.jsonl' | Where-Object { $_.TrimStart().StartsWith('{') } | Select-Object -Last 1
+          if ([string]::IsNullOrWhiteSpace($lastJson)) { throw 'Worker returned no runtime status JSON.' }
+          $status = $lastJson | ConvertFrom-Json
+          if ($status.kind -ne 'completed' -or $status.runtime.state -ne 'Ready' -or -not $status.runtime.isReady) { throw 'Bundled runtime is not ready.' }
       - name: WinUI startup smoke test
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           $signal = Join-Path $env:RUNNER_TEMP 'erasa-ui-started.txt'
           $env:ERASA_SMOKE_TEST_PATH = $signal
           $process = Start-Process 'artifacts\app\ERASA.Video.exe' -PassThru
@@ -224,6 +280,7 @@ jobs:
       - name: Worker failure does not close WinUI
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           $signal = Join-Path $env:RUNNER_TEMP 'erasa-worker-failure-ui-alive.txt'
           $env:ERASA_WORKER_FAILURE_SMOKE_PATH = $signal
           $process = Start-Process 'artifacts\app\ERASA.Video.exe' -PassThru
@@ -241,6 +298,7 @@ jobs:
           path: |
             artifacts/winui-publish.log
             artifacts/winui-publish.binlog
+            artifacts/bundled-runtime-status.jsonl
           if-no-files-found: warn
       - name: Upload Windows app
         uses: actions/upload-artifact@v4
@@ -248,4 +306,5 @@ jobs:
           name: ERASA-VIDEO-2-Windows-x64
           path: artifacts/app
           if-no-files-found: error
+          compression-level: 0
           retention-days: 14

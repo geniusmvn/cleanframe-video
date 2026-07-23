@@ -667,46 +667,21 @@ public sealed partial class MainWindow : Window
     {
         await RefreshRuntimeStatusAsync();
         if (_runtime.IsReady) return true;
+
         var dialog = new ContentDialog
         {
             XamlRoot = RootGrid.XamlRoot,
-            Title = "Cài bộ xử lý LaMa gốc",
-            Content = "Artifact đầy đủ đã kèm LaMa. Nếu thư mục runtime bị thiếu hoặc bị xóa, ứng dụng có thể tải lại Python nhúng, PyTorch, mã nguồn advimman/lama và checkpoint Big-LaMa. Bạn không cần cài hay chạy lệnh.",
-            PrimaryButtonText = "Cài tự động",
-            SecondaryButtonText = "Chỉ CPU",
-            CloseButtonText = "Hủy",
-            DefaultButton = ContentDialogButton.Primary
+            Title = "Thiếu bộ xử lý LaMa",
+            Content = "Bản Windows đầy đủ phải có sẵn thư mục runtime đã được kiểm thử. Hãy tải lại artifact ERASA-VIDEO-2-Windows-x64; ứng dụng không tự cài Python hoặc model trong lúc sử dụng.",
+            CloseButtonText = "Đóng",
+            DefaultButton = ContentDialogButton.Close
         };
-        var choice = await dialog.ShowAsync();
-        if (choice == ContentDialogResult.None) return false;
-        var profile = choice == ContentDialogResult.Secondary ? "cpu" : "auto";
-        try
-        {
-            SetBusy(true, "Đang cài bộ xử lý LaMa gốc…");
-            var result = await RunWorkerAsync(new WorkerRequest
-            {
-                Command = WorkerCommands.RuntimeInstall,
-                RuntimeDirectory = AppPaths.LocalRuntimeDirectory,
-                Profile = profile
-            }, message =>
-            {
-                BusyText.Text = message.Message ?? BusyText.Text;
-                OverallProgress.Value = (message.Progress ?? 0) * 100;
-                OverallStatusText.Text = message.Message ?? OverallStatusText.Text;
-            });
-            _runtime = result.Runtime ?? _runtime;
-            UpdateRuntimeBadge();
-            return _runtime.IsReady;
-        }
-        catch (Exception exception)
-        {
-            HandleError("Cài runtime LaMa", exception, keepPreview: true);
-            return false;
-        }
-        finally
-        {
-            SetBusy(false, string.Empty);
-        }
+        await dialog.ShowAsync();
+        HandleError(
+            "Runtime LaMa",
+            new InvalidOperationException(_runtime.Message ?? "Artifact thiếu runtime LaMa đã kiểm thử."),
+            keepPreview: true);
+        return false;
     }
 
     private async Task RefreshRuntimeStatusAsync()
