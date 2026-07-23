@@ -3,7 +3,12 @@ using Erasa.Video2.Core.Protocol;
 using Erasa.Video2.Worker.Services;
 
 Console.OutputEncoding = Encoding.UTF8;
-Console.Error.OutputEncoding = Encoding.UTF8;
+Console.SetError(new StreamWriter(
+    Console.OpenStandardError(),
+    new UTF8Encoding(encoderShouldEmitUTF8Identifier: false))
+{
+    AutoFlush = true
+});
 
 if (args.Length != 2 || !string.Equals(args[0], "--request", StringComparison.OrdinalIgnoreCase))
 {

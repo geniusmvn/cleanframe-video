@@ -66,7 +66,10 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force 'artifacts' | Out-Null
-          msbuild Erasa.Video2.sln /t:Build /p:Configuration=Release /p:Platform=x64 /m /bl:artifacts\solution-build.binlog
+          msbuild Erasa.Video2.sln /t:Build /p:Configuration=Release /p:Platform=x64 /m `
+            /bl:artifacts\solution-build.binlog `
+            /fl `
+            "/flp:logfile=artifacts\solution-build.log;verbosity=diagnostic"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Test .NET core and worker
