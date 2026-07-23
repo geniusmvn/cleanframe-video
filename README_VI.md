@@ -1,55 +1,63 @@
-# ERASA VIDEO 0.2 — Original LaMa
+# ERASA VIDEO 0.3 — Original LaMa
 
-Ứng dụng Windows xử lý **ảnh và video theo mask người dùng xác nhận**, dùng trực tiếp mã nguồn gốc của [`advimman/lama`](https://github.com/advimman/lama).
+Ứng dụng Windows xử lý **ảnh và video theo mask do người dùng tự kiểm tra và xác nhận**, sử dụng trực tiếp mã nguồn gốc `advimman/lama`.
+
+## Luồng sử dụng
+
+**Chọn tệp → Chọn vùng thủ công hoặc Tự động đề xuất → Xác nhận mask → Preview 3 giây → Xử lý**
+
+- Ảnh/video được đọc và tạo thumbnail bằng FFmpeg đóng gói, **không phụ thuộc Python hoặc LaMa**.
+- Vì vậy canvas, timeline, cọ, tẩy, khung, elip, pan, zoom, undo/redo vẫn sử dụng được ngay cả khi runtime AI gặp lỗi.
+- Tự động đề xuất chỉ tạo mask nháp. Ứng dụng không cho preview hoặc xử lý cho đến khi người dùng bấm **Xác nhận mask**.
+- Lỗi đọc tệp và lỗi runtime được hiện đầy đủ trong giao diện, có nút **Thử đọc lại** và **Mở log**.
 
 ## Nền tảng xử lý
 
 - Workflow tải đúng repository `advimman/lama` tại commit cố định `786f5936b27fb3dacd2b1ad799e4de968ea697e7`.
-- Worker thêm source upstream vào `sys.path` và import trực tiếp:
-  `from saicinpainting.training.trainers import load_checkpoint`.
-- Model là cấu trúc gốc `config.yaml` + `models/best.ckpt` trong gói `big-lama.zip`.
+- Worker import trực tiếp `from saicinpainting.training.trainers import load_checkpoint`.
+- Model dùng cấu trúc gốc `config.yaml` + `models/best.ckpt`.
 - Không dùng ONNX, TorchScript chuyển đổi, `simple-lama`, `lama-cleaner` hoặc FFmpeg `delogo`.
-- Bản artifact mặc định đóng gói PyTorch CPU để dễ build và luôn có fallback.
-- Trong **Cài đặt**, nút **Cài gói NVIDIA** tự cài PyTorch CUDA cho GTX 1660 Super; người dùng không mở CMD, PowerShell, pip hay Python.
+- LaMa chạy ở process Python riêng; UI không nạp PyTorch/model và không tự đóng khi worker lỗi.
 
-## Giao diện ERASA VIDEO
+## Giao diện
 
-- Trắng, xám nhạt và cam theo logo ERASA.
-- Preview lớn bên trái, danh sách xử lý bên phải.
-- Tab **Video / Ảnh**.
-- **Chọn tệp**, **Thêm thư mục**, kéo thả file hoặc thư mục.
-- Cọ, tẩy, khung, elip, pan, mask mềm, undo, redo, reset và zoom.
-- Đề xuất overlay tĩnh tổng quát cho video; người dùng phải kiểm tra/chỉnh mask.
-- Preview 3 giây trước khi xử lý toàn bộ.
+- Tên và logo **ERASA VIDEO**.
+- Tông trắng, xám nhạt và cam theo mẫu đã cung cấp.
+- Preview lớn bên trái, hàng đợi bên phải.
+- Tab **Video / Ảnh**, thêm nhiều tệp, thêm thư mục và kéo thả.
+- Cọ, tẩy, khung, elip, pan, zoom, mask mềm, hoàn tác, làm lại và đặt lại.
+- Trạng thái runtime FFmpeg, công cụ đề xuất và LaMa được kiểm tra riêng.
 
-## Hàng đợi và độ ổn định
+## Hàng đợi và video
 
-- Worker LaMa chạy ở process Python riêng; lỗi worker được bắt và ghi log, không chủ động đóng UI.
-- Queue được lưu trong `%LocalAppData%\ERASA_VIDEO\queue.json`.
-- Video được chia thành các đoạn 2 giây. **Tạm dừng / Tiếp tục / Thử lại** dùng lại các đoạn đã hoàn thành.
-- **Hủy tác vụ** xóa checkpoint và file tạm của job.
+- Queue được lưu tại `%LocalAppData%\ERASA_VIDEO\queue.json`.
+- Video được chia thành segment để **Tạm dừng / Tiếp tục / Thử lại** không phải chạy lại toàn bộ.
+- **Hủy** dọn state và file tạm của job.
 - Pixel raw ngoài mask được chép lại từ frame gốc trước encode.
-- Sau khi xuất video, worker kiểm tra lại độ phân giải, FPS, thời lượng và sự tồn tại của audio nếu nguồn có audio.
+- Sau encode, worker kiểm tra độ phân giải, FPS, thời lượng và audio.
 
-## Build không dùng dòng lệnh
+## Kiểm thử trong GitHub Actions
 
-1. Trong GitHub Desktop: **Repository** → **Show in Explorer**.
-2. Giữ thư mục `.git`, thay source cũ bằng nội dung source này.
-3. Summary nhập: `Rebuild ERASA VIDEO on original LaMa`.
-4. Bấm **Commit to main** → **Push origin**.
-5. Trên GitHub mở **Actions** → **Build ERASA Windows**.
-6. Chỉ tải `ERASA-VIDEO-Windows-x64` khi workflow có dấu xanh.
+Workflow thực hiện theo thứ tự:
 
-## Kiểm thử trong workflow
+1. Restore và build toàn bộ solution .NET.
+2. Chạy test mask, queue, xác nhận mask và parser FFprobe.
+3. Tạo video có audio bằng FFmpeg và kiểm tra `MediaToolService` tạo thumbnail mà không gọi Python/LaMa.
+4. Chạy Python unit tests và source verification.
+5. Publish ứng dụng Windows.
+6. Chẩn đoán utility runtime và original-LaMa runtime trong chính artifact đã ghép.
+7. Mở thật `ERASA.Video.exe` trong smoke test và kiểm tra process không văng khi khởi động.
+8. Chạy original LaMa CPU self-test.
+9. Chạy integration video 3 giây, kiểm tra kích thước, FPS, thời lượng và audio.
 
-- Test mask/undo/redo và queue retry/resume bằng .NET.
-- Test detector không chọn full-frame ngẫu nhiên.
-- Test pixel ngoài mask không đổi trong pipeline raw.
-- Test checkpoint thay đổi khi mask thay đổi, tái sử dụng segment đã xong và dọn file segment dang dở.
-- Tải source/model upstream có commit và checksum cố định.
-- Chạy self-test thật với checkpoint LaMa gốc trên CPU.
-- Tạo video có audio, xuất preview đúng 3 giây bằng LaMa frame-by-frame và kiểm tra kích thước/FPS/thời lượng/audio.
+## Cách đưa source vào GitHub Desktop
 
-## Trạng thái
+1. **Repository** → **Show in Explorer**.
+2. Giữ thư mục `.git`, thay toàn bộ source cũ bằng source 0.3.
+3. Summary: `Rebuild ERASA VIDEO 0.3`
+4. **Commit to main** → **Push origin**.
+5. Chỉ tải `ERASA-VIDEO-Windows-x64` sau khi Actions có dấu xanh.
 
-Đây là **source bàn giao**. Không gọi là ứng dụng Windows đã hoàn chỉnh cho đến khi GitHub Actions chạy xanh và artifact được mở thử trên máy Windows thực tế.
+## Trạng thái bàn giao
+
+Source 0.3 đã được kiểm tra Python/XML/YAML và các hợp đồng tĩnh trong môi trường hiện tại. Không có .NET SDK hoặc Windows GUI runner trong phiên này, nên **không tuyên bố build Windows thành công** trước khi GitHub Actions mới chạy xanh.

@@ -4,9 +4,15 @@
   "workflow_yaml": true,
   "upstream_pins": true,
   "direct_original_lama": true,
-  "xaml_event_handlers": 37,
-  "csharp_brace_files": 23,
+  "xaml_event_handlers": 40,
+  "csharp_brace_files": 26,
+  "csharp_numeric_type_guard": true,
+  "avalonia_input_namespace_guard": true,
+  "ui_media_loading_is_independent_from_lama": true,
+  "ui_requires_explicit_mask_confirmation": true,
   "ui_worker_error_isolation": true,
-  "ci_original_lama_and_preview_contracts": true,
+  "main_window_workflow_controls": 10,
+  "ci_media_ui_original_lama_contracts": true,
+  "application_version": "0.3.0",
   "brand_assets": true
 }

@@ -110,9 +110,32 @@ def read_mask(path: str, width: int, height: int) -> np.ndarray:
     return (mask > 8).astype(np.uint8) * 255
 
 
+def run_checked(command: list[str], label: str, *, capture_output: bool = False):
+    try:
+        return subprocess.run(
+            command,
+            check=True,
+            stdout=subprocess.PIPE if capture_output else subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"Không tìm thấy {label}: {command[0]}") from exc
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or b"").decode("utf-8", "replace").strip()
+        if not detail:
+            detail = f"{label} thoát mã {exc.returncode}."
+        raise RuntimeError(detail) from exc
+
+
 def probe(path: str) -> dict:
     command = [ffmpeg("ffprobe"), "-v", "error", "-show_streams", "-show_format", "-of", "json", path]
-    data = json.loads(subprocess.check_output(command, encoding="utf-8", errors="replace"))
+    try:
+        data = json.loads(subprocess.check_output(command, encoding="utf-8", errors="replace", stderr=subprocess.PIPE))
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"Không tìm thấy FFprobe: {command[0]}") from exc
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or b"").decode("utf-8", "replace").strip()
+        raise RuntimeError(detail or f"FFprobe thoát mã {exc.returncode}.") from exc
     streams = data.get("streams", [])
     video = next((stream for stream in streams if stream.get("codec_type") == "video"), None)
     if not video:
@@ -152,7 +175,7 @@ def cmd_preview_frame(args):
     metadata = probe(args.input)
     command = [ffmpeg("ffmpeg"), "-y", "-v", "error", "-ss", str(max(args.time, 0)), "-i", args.input,
                "-frames:v", "1", "-vf", "scale='min(1280,iw)':-2", str(target)]
-    subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    run_checked(command, "FFmpeg")
     image = cv2.imread(str(target), cv2.IMREAD_COLOR)
     if image is None:
         raise RuntimeError("Không tạo được ảnh xem trước.")
@@ -463,6 +486,52 @@ def cmd_video(args):
         raise
 
 
+def cmd_diagnose_utility(args):
+    required = {
+        "python": Path(sys.executable),
+        "worker": Path(__file__),
+        "ffmpeg": Path(ffmpeg("ffmpeg")),
+        "ffprobe": Path(ffmpeg("ffprobe")),
+    }
+    missing = [f"{name}: {path}" for name, path in required.items() if not path.exists()]
+    if missing:
+        raise RuntimeError("Thiếu thành phần công cụ: " + "; ".join(missing))
+    run_checked([ffmpeg("ffmpeg"), "-version"], "FFmpeg")
+    run_checked([ffmpeg("ffprobe"), "-version"], "FFprobe")
+    emit(
+        "completed",
+        1,
+        f"Công cụ hợp lệ • Python {sys.version_info.major}.{sys.version_info.minor} • OpenCV {cv2.__version__} • NumPy {np.__version__}",
+        str(app_root()),
+    )
+
+
+def cmd_diagnose(args):
+    required = {
+        "python": Path(sys.executable),
+        "worker": Path(__file__),
+        "lama": runtime_path("lama", "saicinpainting"),
+        "config": runtime_path("models", "big-lama", "config.yaml"),
+        "checkpoint": runtime_path("models", "big-lama", "models", "best.ckpt"),
+        "ffmpeg": Path(ffmpeg("ffmpeg")),
+        "ffprobe": Path(ffmpeg("ffprobe")),
+    }
+    missing = [f"{name}: {path}" for name, path in required.items() if not path.exists()]
+    if missing:
+        raise RuntimeError("Thiếu thành phần runtime: " + "; ".join(missing))
+    configure_original_lama()
+    import torch
+    from saicinpainting.training.trainers import load_checkpoint  # noqa: F401
+    run_checked([ffmpeg("ffmpeg"), "-version"], "FFmpeg")
+    run_checked([ffmpeg("ffprobe"), "-version"], "FFprobe")
+    emit(
+        "completed",
+        1,
+        f"Runtime hợp lệ • Python {sys.version_info.major}.{sys.version_info.minor} • Torch {torch.__version__}",
+        str(app_root()),
+    )
+
+
 def cmd_selftest(args):
     engine = OriginalLamaEngine(args.device)
     image = np.zeros((128, 128, 3), np.uint8)
@@ -484,6 +553,8 @@ def parser():
     p = sub.add_parser("suggest-video"); p.add_argument("--input", required=True); p.add_argument("--output", required=True); p.set_defaults(func=cmd_suggest_video)
     p = sub.add_parser("image"); p.add_argument("--input", required=True); p.add_argument("--mask", required=True); p.add_argument("--output", required=True); p.add_argument("--device", choices=["auto", "cuda", "cpu"], default="auto"); p.set_defaults(func=cmd_image)
     p = sub.add_parser("video"); p.add_argument("--input", required=True); p.add_argument("--mask", required=True); p.add_argument("--output", required=True); p.add_argument("--device", choices=["auto", "cuda", "cpu"], default="auto"); p.add_argument("--start", type=float, default=0); p.add_argument("--duration", type=float); p.add_argument("--crf", type=int, default=18); p.add_argument("--state-dir"); p.add_argument("--segment-seconds", type=float, default=2.0); p.set_defaults(func=cmd_video)
+    p = sub.add_parser("diagnose-utility"); p.set_defaults(func=cmd_diagnose_utility)
+    p = sub.add_parser("diagnose"); p.set_defaults(func=cmd_diagnose)
     p = sub.add_parser("selftest"); p.add_argument("--device", choices=["auto", "cuda", "cpu"], default="cpu"); p.set_defaults(func=cmd_selftest)
     return root
 

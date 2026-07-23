@@ -17,6 +17,7 @@ jobs:
       DOTNET_CLI_TELEMETRY_OPTOUT: true
       PYTHONUTF8: 1
       PYTHONIOENCODING: utf-8
+      ERASA_TEST_APP_ROOT: ${{ github.workspace }}\artifacts
 
     steps:
       - name: Checkout
@@ -104,6 +105,35 @@ jobs:
           Copy-Item 'THIRD_PARTY_NOTICES.md' 'artifacts/app/THIRD_PARTY_NOTICES.md'
           Get-ChildItem 'artifacts/app' -Recurse | Select-Object FullName, Length | Out-File 'artifacts/artifact-file-list.txt'
 
+      - name: Packaged utility diagnose
+        shell: pwsh
+        run: |
+          Push-Location artifacts/app
+          $env:ERASA_APP_ROOT = (Get-Location).Path
+          & '.\runtime\python\python.exe' -X utf8 '.\worker\erasa_worker.py' diagnose-utility `
+            | Tee-Object -FilePath '..\utility-diagnose.jsonl'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Pop-Location
+
+      - name: Packaged original LaMa diagnose
+        shell: pwsh
+        run: |
+          Push-Location artifacts/app
+          $env:ERASA_APP_ROOT = (Get-Location).Path
+          & '.\runtime\python\python.exe' -X utf8 '.\worker\erasa_worker.py' diagnose `
+            | Tee-Object -FilePath '..\runtime-diagnose.jsonl'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Pop-Location
+
+      - name: Desktop startup smoke test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $process = Start-Process 'artifacts/app/ERASA.Video.exe' -PassThru
+          Start-Sleep -Seconds 6
+          if ($process.HasExited) { throw "ERASA desktop app exited during startup with code $($process.ExitCode)." }
+          & taskkill.exe /PID $process.Id /T /F | Out-Null
+
       - name: Original LaMa CPU self-test
         shell: pwsh
         run: |
@@ -150,6 +180,8 @@ jobs:
           name: ERASA-VIDEO-TestResults
           path: |
             TestResults
+            artifacts/utility-diagnose.jsonl
+            artifacts/runtime-diagnose.jsonl
             artifacts/lama-self-test.jsonl
             artifacts/artifact-file-list.txt
             artifacts/source-verification.json

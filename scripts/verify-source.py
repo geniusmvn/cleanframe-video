@@ -66,6 +66,8 @@ def main() -> int:
         "np.where(m, result, bgr",
         "verify_video_contract",
         "prepare_resume_directory",
+        "cmd_diagnose_utility",
+        'sub.add_parser("diagnose-utility")',
     ]
     for token in required_worker_tokens:
         if token not in worker:
@@ -118,18 +120,74 @@ def main() -> int:
     result["avalonia_input_namespace_guard"] = True
 
     main_window = (ROOT / "src" / "Erasa.Video.App" / "MainWindow.axaml.cs").read_text(encoding="utf-8")
-    for token in ("Editor.PanDelta", "Editor.SetZoom(_zoom)", 'AppLog.WriteAsync("ProcessItem"'):
+    required_ui_tokens = (
+        "private readonly MediaToolService _media = new();",
+        "await _media.ProbeAsync",
+        "await _media.CreatePreviewFrameAsync",
+        "MaskConfirmed = false",
+        "ConfirmMask_Click",
+        "if (!_inferenceReady)",
+        "if (!_utilityReady)",
+        "Editor.SetZoom(_zoom)",
+        'AppLog.WriteAsync("ProcessItem"',
+        "failed item must not close the application or block the remaining queue",
+    )
+    for token in required_ui_tokens:
         if token not in main_window:
             raise AssertionError(f"Missing UI resilience/tool contract: {token}")
-    if "Environment.Exit" in main_window or "FailFast" in main_window:
-        raise AssertionError("UI contains a process-killing failure path")
+    forbidden_ui_tokens = (
+        'RunAsync(["preview-frame"',
+        "EditorScroll",
+        "Editor.PanDelta",
+        "Environment.Exit",
+        "FailFast",
+    )
+    for token in forbidden_ui_tokens:
+        if token in main_window:
+            raise AssertionError(f"Obsolete or unsafe UI path found: {token}")
+    if main_window.count("await PersistQueueAsync();\n        await PersistQueueAsync();"):
+        raise AssertionError("Duplicate queue persistence call found")
+    result["ui_media_loading_is_independent_from_lama"] = True
+    result["ui_requires_explicit_mask_confirmation"] = True
     result["ui_worker_error_isolation"] = True
 
+    xaml_text = (ROOT / "src" / "Erasa.Video.App" / "MainWindow.axaml").read_text(encoding="utf-8")
+    required_named_controls = (
+        "RuntimeStatusText", "Editor", "EmptyState", "ConfirmMaskButton", "PreviewButton",
+        "ErrorPanel", "ErrorText", "QueueList", "ProcessButton", "BatchProgress",
+    )
+    for control_name in required_named_controls:
+        if f'x:Name="{control_name}"' not in xaml_text:
+            raise AssertionError(f"Missing main-window control: {control_name}")
+    if 'Text="v0.3.0"' not in xaml_text:
+        raise AssertionError("Main-window version label was not updated")
+    result["main_window_workflow_controls"] = len(required_named_controls)
+
     workflow_text = workflow_path.read_text(encoding="utf-8")
-    for token in ("Original LaMa CPU self-test", "--duration 3", "Preview duration is", "Video integration test lost audio"):
-        if token not in workflow_text:
+    required_ci_tokens = (
+        "Build solution",
+        "BundledFfmpeg_CreatesPreviewWithoutPythonOrLama",
+        "Packaged utility diagnose",
+        "Packaged original LaMa diagnose",
+        "Desktop startup smoke test",
+        "Original LaMa CPU self-test",
+        "--duration 3",
+        "Preview duration is",
+        "Video integration test lost audio",
+    )
+    for token in required_ci_tokens:
+        if token == "BundledFfmpeg_CreatesPreviewWithoutPythonOrLama":
+            if token not in (ROOT / "tests" / "Erasa.Video.Tests" / "MediaToolServiceTests.cs").read_text(encoding="utf-8"):
+                raise AssertionError(f"Missing CI media test: {token}")
+        elif token not in workflow_text:
             raise AssertionError(f"Missing CI contract: {token}")
-    result["ci_original_lama_and_preview_contracts"] = True
+    result["ci_media_ui_original_lama_contracts"] = True
+
+    app_project = (ROOT / "src" / "Erasa.Video.App" / "Erasa.Video.App.csproj").read_text(encoding="utf-8")
+    for token in ("<Version>0.3.0</Version>", "<FileVersion>0.3.0.0</FileVersion>"):
+        if token not in app_project:
+            raise AssertionError(f"Missing application version: {token}")
+    result["application_version"] = "0.3.0"
 
     for name in ("erasa-brand.png", "erasa-icon.png", "erasa.ico", "erasa-splash.png"):
         path = ROOT / "src" / "Erasa.Video.App" / "Assets" / name

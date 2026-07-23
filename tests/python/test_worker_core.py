@@ -99,6 +99,12 @@ class WorkerCoreTests(unittest.TestCase):
             self.assertEqual(4, resume_state["total_segments"])
             self.assertTrue((state / "state.json").exists())
 
+    def test_parser_registers_runtime_diagnostics(self):
+        parser = MODULE.parser()
+        subparsers = next(action for action in parser._actions if hasattr(action, "choices") and action.choices)
+        self.assertIn("diagnose-utility", subparsers.choices)
+        self.assertIn("diagnose", subparsers.choices)
+
 
 if __name__ == "__main__":
     unittest.main()

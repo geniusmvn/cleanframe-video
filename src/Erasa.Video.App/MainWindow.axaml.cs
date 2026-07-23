@@ -6,6 +6,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Erasa.Video.App.Services;
+using Erasa.Video.Core.Media;
 using Erasa.Video.Core.Models;
 using Erasa.Video.Core.Processing;
 using Erasa.Video.Core.Queue;
@@ -25,6 +26,7 @@ public partial class MainWindow : Window
 
     private readonly ObservableCollection<MediaItem> _items = [];
     private readonly WorkerClient _worker = new();
+    private readonly MediaToolService _media = new();
     private readonly QueueStateStore _queueStore = new();
     private readonly string _appData = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ERASA_VIDEO");
@@ -37,6 +39,9 @@ public partial class MainWindow : Window
     private bool _pauseRequested;
     private bool _timelineInternal;
     private bool _loadingSelection;
+    private bool _mediaReady;
+    private bool _utilityReady;
+    private bool _inferenceReady;
     private double _zoom = 1;
 
     private string WorkDirectory => Path.Combine(_appData, "work");
@@ -47,12 +52,10 @@ public partial class MainWindow : Window
         InitializeComponent();
         RefreshQueueView();
 
-        Editor.PanDelta += (_, delta) =>
+        Editor.ZoomChanged += zoom =>
         {
-            var maximum = EditorScroll.ScrollBarMaximum;
-            EditorScroll.Offset = new Vector(
-                Math.Clamp(EditorScroll.Offset.X - delta.DeltaX, 0, maximum.X),
-                Math.Clamp(EditorScroll.Offset.Y - delta.DeltaY, 0, maximum.Y));
+            _zoom = zoom;
+            ZoomText.Text = $"{zoom * 100:0}%";
         };
 
         Editor.MaskChanged += (_, _) =>
@@ -60,15 +63,16 @@ public partial class MainWindow : Window
             if (_selected is null || _loadingSelection) return;
             _selected.Mask = Editor.Document;
             _selected.MaskPath = null;
-            InvalidateResumeState(_selected);
-            _selected.Status = Editor.Document.Operations.Count > 0
-                || !string.IsNullOrWhiteSpace(_selected.SuggestedMaskPath)
-                ? JobStatus.Ready
-                : JobStatus.WaitingForMask;
+            _selected.MaskConfirmed = false;
             _selected.Error = null;
-            HintText.Text = _selected.Status == JobStatus.Ready
-                ? "Mask đã sẵn sàng. Hãy tạo preview trước khi xử lý."
+            _selected.Status = JobStatus.WaitingForMask;
+            _selected.NotifyMaskStateChanged();
+            InvalidateResumeState(_selected);
+            HintText.Text = _selected.HasMaskContent
+                ? "Mask đã thay đổi. Bấm Xác nhận mask trước khi preview hoặc xử lý."
                 : "Hãy vẽ vùng cần xóa.";
+            UpdateSelectedState();
+            UpdateCounts();
             _ = PersistQueueAsync();
         };
 
@@ -89,7 +93,8 @@ public partial class MainWindow : Window
             foreach (var item in await _queueStore.LoadAsync())
             {
                 _items.Add(item);
-                if (string.IsNullOrWhiteSpace(item.PreviewPath) || !File.Exists(item.PreviewPath))
+                if (item.HasError || item.Width <= 0 || item.Height <= 0
+                    || string.IsNullOrWhiteSpace(item.PreviewPath) || !File.Exists(item.PreviewPath))
                     await PrepareItemAsync(item);
             }
 
@@ -97,15 +102,70 @@ public partial class MainWindow : Window
             UpdateCounts();
             if (QueueList.ItemCount > 0) QueueList.SelectedIndex = 0;
 
-            StatusText.Text = _worker.IsRuntimeAvailable
-                ? "Sẵn sàng • LaMa gốc đã được đóng gói"
-                : "Source chưa có runtime. Chỉ artifact GitHub Actions mới chạy LaMa.";
+            await RefreshRuntimeStatusAsync();
+            EmptyState.IsVisible = _items.Count == 0;
+            StatusText.Text = _items.Count == 0
+                ? "Sẵn sàng • Thêm ảnh hoặc video để bắt đầu"
+                : "Sẵn sàng";
         }
         catch (Exception ex)
         {
             await AppLog.WriteAsync("Startup", ex);
             StatusText.Text = $"Không khởi tạo được ứng dụng: {ex.Message}";
         }
+    }
+
+    private async Task RefreshRuntimeStatusAsync()
+    {
+        _mediaReady = false;
+        _utilityReady = false;
+        _inferenceReady = false;
+        var messages = new List<string>();
+
+        try
+        {
+            await _media.ValidateAsync();
+            _mediaReady = true;
+            messages.Add("FFmpeg sẵn sàng");
+        }
+        catch (Exception ex)
+        {
+            messages.Add("FFmpeg lỗi");
+            await AppLog.WriteAsync("RuntimeMedia", ex);
+        }
+
+        if (_worker.IsUtilityAvailable)
+        {
+            try
+            {
+                await _worker.RunAsync(["diagnose-utility"]);
+                _utilityReady = true;
+            }
+            catch (Exception ex)
+            {
+                await AppLog.WriteAsync("RuntimeUtility", ex);
+            }
+        }
+        messages.Add(_utilityReady ? "Công cụ đề xuất sẵn sàng" : "Công cụ đề xuất lỗi");
+
+        if (_worker.IsRuntimeAvailable)
+        {
+            try
+            {
+                await _worker.RunAsync(["diagnose"]);
+                _inferenceReady = true;
+            }
+            catch (Exception ex)
+            {
+                await AppLog.WriteAsync("RuntimeInference", ex);
+            }
+        }
+        messages.Add(_inferenceReady ? "LaMa gốc sẵn sàng" : "LaMa gốc lỗi");
+
+        RuntimeStatusText.Text = string.Join("  •  ", messages);
+        RuntimeStatusText.Foreground = new Avalonia.Media.SolidColorBrush(
+            Avalonia.Media.Color.Parse(_mediaReady && _inferenceReady ? "#2E7D32" : "#B42318"));
+        UpdateActionButtons();
     }
 
     private async void OnClosed(object? sender, EventArgs e)
@@ -198,30 +258,25 @@ public partial class MainWindow : Window
         if (_selected is null && QueueList.ItemCount > 0) QueueList.SelectedIndex = 0;
     }
 
-    private async Task PrepareItemAsync(MediaItem item)
+    private async Task PrepareItemAsync(MediaItem item, CancellationToken cancellationToken = default)
     {
         try
         {
-            if (!_worker.IsRuntimeAvailable)
-            {
-                item.Status = JobStatus.WaitingForMask;
-                return;
-            }
-
+            var metadata = await _media.ProbeAsync(item.InputPath, cancellationToken);
             var preview = Path.Combine(WorkDirectory, $"{item.Id:N}_preview.png");
-            var result = await _worker.RunAsync(
-                ["preview-frame", "--input", item.InputPath, "--output", preview, "--time", "0"]);
+            await _media.CreatePreviewFrameAsync(item.InputPath, preview, 0, 1600, cancellationToken);
             item.PreviewPath = preview;
-            item.Width = result.Width ?? item.Width;
-            item.Height = result.Height ?? item.Height;
-            item.DurationSeconds = result.Duration ?? item.DurationSeconds;
+            item.Width = metadata.Width;
+            item.Height = metadata.Height;
+            item.DurationSeconds = item.Kind == MediaKind.Video ? metadata.DurationSeconds : 0;
             item.Error = null;
-            if (item.Status == JobStatus.Failed) item.Status = JobStatus.WaitingForMask;
+            item.Status = item.MaskConfirmed ? JobStatus.Ready : JobStatus.WaitingForMask;
+            item.NotifyMaskStateChanged();
         }
         catch (Exception ex)
         {
             item.Status = JobStatus.Failed;
-            item.Error = ex.Message;
+            item.Error = $"Không đọc được tệp: {ex.Message}";
             await AppLog.WriteAsync("PrepareItem", ex);
         }
     }
@@ -266,13 +321,15 @@ public partial class MainWindow : Window
             DurationText.Text = item.Kind == MediaKind.Video ? FormatTime(item.DurationSeconds) : "Ảnh";
             CurrentTimeText.Text = "00:00";
             _timelineInternal = false;
-            Timeline.IsEnabled = item.Kind == MediaKind.Video;
-            AutoButton.IsEnabled = _processingCts is null && item.Kind == MediaKind.Video;
+            Timeline.IsEnabled = item.Kind == MediaKind.Video && item.DurationSeconds > 0;
+            EmptyState.IsVisible = !Editor.HasSource;
             HintText.Text = item.Status switch
             {
-                JobStatus.Failed => item.Error ?? "Tác vụ trước đã thất bại. Có thể bấm Thử lại.",
+                JobStatus.Failed => item.Error ?? "Không đọc được tệp. Bấm Thử đọc lại hoặc mở log.",
                 JobStatus.Paused => "Tác vụ đã tạm dừng. Bấm Tiếp tục để dùng lại các đoạn đã hoàn thành.",
                 JobStatus.Completed => $"Đã xuất: {item.OutputPath}",
+                _ when item.MaskConfirmed => "Mask đã được xác nhận. Có thể tạo preview hoặc xử lý.",
+                _ when item.HasMaskContent => "Hãy kiểm tra vùng màu cam rồi bấm Xác nhận mask.",
                 _ => "Vẽ mask hoặc dùng tự động đề xuất cho video."
             };
         }
@@ -284,35 +341,37 @@ public partial class MainWindow : Window
         finally
         {
             _loadingSelection = false;
+            UpdateSelectedState();
             UpdateActionButtons();
         }
     }
 
     private async void Timeline_Changed(object? sender, Avalonia.Controls.Primitives.RangeBaseValueChangedEventArgs e)
     {
-        if (_timelineInternal || _selected?.Kind != MediaKind.Video || !_worker.IsRuntimeAvailable || _processingCts is not null)
+        if (_timelineInternal || _selected?.Kind != MediaKind.Video || !_media.IsAvailable || _processingCts is not null)
             return;
         CurrentTimeText.Text = FormatTime(e.NewValue);
         var selected = _selected;
-        await Task.Delay(140);
+        await Task.Delay(160);
         if (!ReferenceEquals(selected, _selected) || Math.Abs(Timeline.Value - e.NewValue) > .01) return;
 
         try
         {
             var preview = Path.Combine(WorkDirectory, $"{selected.Id:N}_{e.NewValue:0.00}.png");
-            await _worker.RunAsync(
-                [
-                    "preview-frame", "--input", selected.InputPath, "--output", preview,
-                    "--time", e.NewValue.ToString(CultureInfo.InvariantCulture)
-                ]);
+            await _media.CreatePreviewFrameAsync(selected.InputPath, preview, e.NewValue, 1600);
             await using var stream = File.OpenRead(preview);
             Editor.SetSource(new Bitmap(stream));
             Editor.SetDocument(selected.Mask);
+            EmptyState.IsVisible = false;
+            selected.Error = null;
+            UpdateSelectedState();
         }
         catch (Exception ex)
         {
+            selected.Error = $"Không đọc được frame tại {FormatTime(e.NewValue)}: {ex.Message}";
             await AppLog.WriteAsync("TimelinePreview", ex);
-            StatusText.Text = ex.Message;
+            StatusText.Text = selected.Error;
+            UpdateSelectedState();
         }
     }
 
@@ -324,6 +383,12 @@ public partial class MainWindow : Window
             return;
         }
         if (_processingCts is not null) return;
+        if (!_utilityReady)
+        {
+            _selected.Error = "Công cụ tự động đề xuất chưa sẵn sàng. Bạn vẫn có thể chọn vùng thủ công.";
+            UpdateSelectedState();
+            return;
+        }
 
         try
         {
@@ -358,8 +423,12 @@ public partial class MainWindow : Window
             }
             _selected.SuggestedOverlayPath = result.Output;
 
-            _selected.Status = JobStatus.Ready;
-            HintText.Text = "Đã tạo đề xuất. Hãy kiểm tra kỹ, chỉnh mask rồi tạo Preview 3 giây.";
+            _selected.MaskConfirmed = false;
+            _selected.Status = JobStatus.WaitingForMask;
+            _selected.NotifyMaskStateChanged();
+            HintText.Text = "Đã tạo đề xuất. Hãy kiểm tra vùng màu cam, chỉnh nếu cần rồi bấm Xác nhận mask.";
+            UpdateSelectedState();
+            UpdateCounts();
             await PersistQueueAsync();
         }
         catch (Exception ex)
@@ -373,42 +442,82 @@ public partial class MainWindow : Window
         finally
         {
             SetBusy(false);
+            UpdateSelectedState();
         }
     }
 
     private void Manual_Click(object? sender, RoutedEventArgs e)
     {
-        if (_selected is not null)
+        if (_selected is null)
         {
-            _selected.Mask.Clear();
-            _selected.MaskPath = null;
-            _selected.SuggestedOverlayPath = null;
-            _selected.SuggestedMaskPath = null;
-            _selected.SuggestedMaskRawPath = null;
-            _selected.Error = null;
-            InvalidateResumeState(_selected);
-            _selected.Status = JobStatus.WaitingForMask;
-            _selected.Progress = 0;
-            UpdateCounts();
-            _ = PersistQueueAsync();
+            HintText.Text = "Hãy chọn một tệp trước.";
+            return;
         }
-        Editor.SetExternalOverlay(null);
-        Editor.SetBaseMask(null);
         Editor.Tool = MaskTool.Brush;
         SelectTool(BrushTool);
-        HintText.Text = "Dùng cọ, tẩy, khung hoặc elip để xác nhận mask.";
+        CanvasModeText.Text = "CỌ";
+        HintText.Text = _selected.HasMaskContent
+            ? "Có thể dùng cọ, tẩy, khung hoặc elip để chỉnh mask hiện tại."
+            : "Dùng cọ, tẩy, khung hoặc elip để vẽ vùng cần xóa.";
+    }
+
+    private async void ConfirmMask_Click(object? sender, RoutedEventArgs e)
+    {
+        if (_selected is null) return;
+        try
+        {
+            if (!_selected.HasMaskContent)
+                throw new InvalidOperationException("Chưa có vùng mask để xác nhận.");
+            var maskPath = await EnsureMaskFileAsync(_selected);
+            if (!File.Exists(maskPath) || new FileInfo(maskPath).Length == 0)
+                throw new InvalidOperationException("Không tạo được tệp mask.");
+            _selected.MaskConfirmed = true;
+            _selected.Status = JobStatus.Ready;
+            _selected.Error = null;
+            _selected.NotifyMaskStateChanged();
+            HintText.Text = "Mask đã được xác nhận. Có thể tạo Preview 3 giây hoặc bấm XỬ LÝ.";
+            StatusText.Text = $"Đã xác nhận mask cho {_selected.DisplayName}";
+            UpdateSelectedState();
+            UpdateCounts();
+            await PersistQueueAsync();
+        }
+        catch (Exception ex)
+        {
+            _selected.MaskConfirmed = false;
+            _selected.Error = ex.Message;
+            await AppLog.WriteAsync("ConfirmMask", ex);
+            UpdateSelectedState();
+        }
     }
 
     private async Task<string> EnsureMaskAsync(MediaItem item)
     {
+        if (!item.MaskConfirmed)
+            throw new InvalidOperationException($"{item.DisplayName}: mask chưa được người dùng xác nhận.");
+        return await EnsureMaskFileAsync(item);
+    }
+
+    private async Task<string> EnsureMaskFileAsync(MediaItem item)
+    {
         if (item.Mask.Operations.Count == 0 && !string.IsNullOrWhiteSpace(item.SuggestedMaskPath)
             && File.Exists(item.SuggestedMaskPath))
+        {
+            if (!string.IsNullOrWhiteSpace(item.SuggestedMaskRawPath) && File.Exists(item.SuggestedMaskRawPath))
+            {
+                var raw = await File.ReadAllBytesAsync(item.SuggestedMaskRawPath);
+                if (!raw.Any(value => value > 8))
+                    throw new InvalidOperationException("Mask đề xuất đang rỗng. Hãy chọn vùng thủ công.");
+            }
+            item.MaskPath = item.SuggestedMaskPath;
             return item.SuggestedMaskPath;
+        }
         if (item.Mask.Operations.Count == 0 && string.IsNullOrWhiteSpace(item.SuggestedMaskPath))
-            throw new InvalidOperationException($"{item.DisplayName}: chưa có mask được xác nhận.");
+            throw new InvalidOperationException($"{item.DisplayName}: chưa có vùng mask.");
 
-        var width = item.Width > 0 ? item.Width : 1280;
-        var height = item.Height > 0 ? item.Height : 720;
+        if (item.Width <= 0 || item.Height <= 0)
+            throw new InvalidOperationException($"{item.DisplayName}: chưa đọc được độ phân giải nguồn.");
+        var width = item.Width;
+        var height = item.Height;
         byte[] baseAlpha = [];
         if (!string.IsNullOrWhiteSpace(item.SuggestedMaskRawPath) && File.Exists(item.SuggestedMaskRawPath))
         {
@@ -416,6 +525,8 @@ public partial class MainWindow : Window
             if (raw.Length == width * height) baseAlpha = raw;
         }
         var alpha = MaskRasterizer.Render(item.Mask, width, height, baseAlpha);
+        if (!alpha.Any(value => value > 8))
+            throw new InvalidOperationException("Mask đang rỗng. Hãy vẽ lại vùng cần xóa.");
         var path = Path.Combine(WorkDirectory, $"{item.Id:N}_mask.png");
         await MaskPngWriter.WriteGrayscaleAsync(path, width, height, alpha);
         item.MaskPath = path;
@@ -426,6 +537,18 @@ public partial class MainWindow : Window
     {
         if (_selected is null || _processingCts is not null) return;
         var item = _selected;
+        if (!_inferenceReady)
+        {
+            item.Error = "LaMa gốc chưa sẵn sàng. Bấm Mở log để xem chẩn đoán runtime.";
+            UpdateSelectedState();
+            return;
+        }
+        if (!item.MaskConfirmed)
+        {
+            HintText.Text = "Hãy bấm Xác nhận mask trước khi tạo preview.";
+            return;
+        }
+        item.Error = null;
         _processingCts = new CancellationTokenSource();
         _runningItem = item;
         _pauseRequested = false;
@@ -454,8 +577,10 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            item.Error = ex.Message;
             StatusText.Text = ex.Message;
             await AppLog.WriteAsync("Preview", ex);
+            UpdateSelectedState();
         }
         finally
         {
@@ -467,9 +592,23 @@ public partial class MainWindow : Window
 
     private async void Process_Click(object? sender, RoutedEventArgs e)
     {
+        if (!_inferenceReady)
+        {
+            StatusText.Text = "LaMa gốc chưa sẵn sàng. Bấm Mở log để xem lỗi runtime.";
+            return;
+        }
         var candidates = _items
-            .Where(item => item.Kind == _activeTab && item.Status is not (JobStatus.Completed or JobStatus.Running))
+            .Where(item => item.Kind == _activeTab
+                && item.MaskConfirmed
+                && item.HasMaskContent
+                && item.Status is not (JobStatus.Completed or JobStatus.Running or JobStatus.Queued))
             .ToArray();
+        if (candidates.Length == 0)
+        {
+            StatusText.Text = "Chưa có tệp nào có mask đã được xác nhận.";
+            HintText.Text = "Chọn vùng cần xóa rồi bấm Xác nhận mask.";
+            return;
+        }
         await RunQueueAsync(candidates);
     }
 
@@ -632,7 +771,7 @@ public partial class MainWindow : Window
     {
         if (_processingCts is not null) return;
         var item = _selected;
-        if (item is null || !JobStatePolicy.CanRetry(item.Status)) return;
+        if (item is null || !item.MaskConfirmed || !JobStatePolicy.CanRetry(item.Status)) return;
         item.Status = JobStatus.Queued;
         item.Error = null;
         await PersistQueueAsync();
@@ -666,6 +805,15 @@ public partial class MainWindow : Window
             !Enum.TryParse<MaskTool>(tag, out var tool)) return;
         Editor.Tool = tool;
         SelectTool(button);
+        CanvasModeText.Text = tool switch
+        {
+            MaskTool.Brush => "CỌ",
+            MaskTool.Eraser => "TẨY",
+            MaskTool.Rectangle => "KHUNG",
+            MaskTool.Ellipse => "ELIP",
+            MaskTool.Pan => "PAN",
+            _ => tool.ToString().ToUpperInvariant()
+        };
     }
 
     private void SelectTool(Button active)
@@ -692,9 +840,15 @@ public partial class MainWindow : Window
             _selected.SuggestedOverlayPath = null;
             _selected.SuggestedMaskPath = null;
             _selected.SuggestedMaskRawPath = null;
+            _selected.MaskConfirmed = false;
+            _selected.Status = JobStatus.WaitingForMask;
+            _selected.NotifyMaskStateChanged();
             InvalidateResumeState(_selected);
         }
         Editor.ClearMask();
+        HintText.Text = "Mask đã được đặt lại. Hãy vẽ vùng cần xóa.";
+        UpdateSelectedState();
+        UpdateCounts();
     }
 
     private void ZoomIn_Click(object? sender, RoutedEventArgs e) => SetZoom(Math.Min(3, _zoom + .25));
@@ -702,35 +856,44 @@ public partial class MainWindow : Window
 
     private void SetZoom(double value)
     {
-        _zoom = value;
+        _zoom = Math.Clamp(value, .5, 4);
         Editor.SetZoom(_zoom);
-        var maximum = EditorScroll.ScrollBarMaximum;
-        EditorScroll.Offset = new Vector(
-            Math.Clamp(EditorScroll.Offset.X, 0, maximum.X),
-            Math.Clamp(EditorScroll.Offset.Y, 0, maximum.Y));
         ZoomText.Text = $"{_zoom * 100:0}%";
     }
 
-    private void VideoTab_Click(object? sender, RoutedEventArgs e)
-    {
-        _activeTab = MediaKind.Video;
-        ApplyTabStyle();
-        RefreshQueueView();
-        UpdateCounts();
-    }
+    private void VideoTab_Click(object? sender, RoutedEventArgs e) => SwitchTab(MediaKind.Video);
 
-    private void ImageTab_Click(object? sender, RoutedEventArgs e)
+    private void ImageTab_Click(object? sender, RoutedEventArgs e) => SwitchTab(MediaKind.Image);
+
+    private void SwitchTab(MediaKind kind)
     {
-        _activeTab = MediaKind.Image;
+        _activeTab = kind;
         ApplyTabStyle();
+        var target = _selected?.Kind == kind
+            ? _selected
+            : _items.FirstOrDefault(item => item.Kind == kind);
+        if (!ReferenceEquals(_selected, target))
+        {
+            _selected = target;
+            Editor.SetSource(null);
+            Editor.SetExternalOverlay(null);
+            Editor.SetBaseMask(null);
+        }
         RefreshQueueView();
+        QueueList.SelectedItem = target;
+        if (target is null)
+        {
+            HintText.Text = kind == MediaKind.Video ? "Thêm video để bắt đầu." : "Thêm ảnh để bắt đầu.";
+            UpdateSelectedState();
+        }
         UpdateCounts();
     }
 
     private async void Settings_Click(object? sender, RoutedEventArgs e)
     {
         var window = new SettingsWindow(_settings);
-        await window.ShowDialog<bool>(this);
+        if (await window.ShowDialog<bool>(this))
+            await RefreshRuntimeStatusAsync();
     }
 
     private void Exit_Click(object? sender, RoutedEventArgs e) => Close();
@@ -744,6 +907,32 @@ public partial class MainWindow : Window
     {
         Directory.CreateDirectory(_settings.OutputDirectory);
         OpenPath(_settings.OutputDirectory);
+    }
+
+    private async void RetryLoad_Click(object? sender, RoutedEventArgs e)
+    {
+        if (_selected is null || _processingCts is not null) return;
+        var item = _selected;
+        StatusText.Text = $"Đang đọc lại {item.DisplayName}…";
+        await RefreshRuntimeStatusAsync();
+        await PrepareItemAsync(item);
+        if (!string.IsNullOrWhiteSpace(item.PreviewPath) && File.Exists(item.PreviewPath))
+        {
+            await using var stream = File.OpenRead(item.PreviewPath);
+            Editor.SetSource(new Bitmap(stream));
+            Editor.SetDocument(item.Mask);
+            EmptyState.IsVisible = false;
+        }
+        UpdateSelectedState();
+        UpdateCounts();
+        await PersistQueueAsync();
+    }
+
+    private void OpenLog_Click(object? sender, RoutedEventArgs e)
+    {
+        Directory.CreateDirectory(AppLog.LogDirectory);
+        if (File.Exists(AppLog.LatestLogPath)) OpenPath(AppLog.LatestLogPath);
+        else OpenPath(AppLog.LogDirectory);
     }
 
     private async void RemoveItem_Click(object? sender, RoutedEventArgs e)
@@ -760,6 +949,7 @@ public partial class MainWindow : Window
         }
         RefreshQueueView();
         UpdateCounts();
+        UpdateSelectedState();
         await PersistQueueAsync();
     }
 
@@ -774,14 +964,18 @@ public partial class MainWindow : Window
         Editor.SetBaseMask(null);
         RefreshQueueView();
         UpdateCounts();
+        UpdateSelectedState();
         await PersistQueueAsync();
     }
 
     private void RefreshQueueView()
     {
         var selected = _selected;
-        QueueList.ItemsSource = _items.Where(item => item.Kind == _activeTab).ToArray();
+        var activeItems = _items.Where(item => item.Kind == _activeTab).ToArray();
+        for (var index = 0; index < activeItems.Length; index++) activeItems[index].QueueNumber = index + 1;
+        QueueList.ItemsSource = activeItems;
         if (selected?.Kind == _activeTab) QueueList.SelectedItem = selected;
+        EmptyState.IsVisible = selected?.Kind != _activeTab || !Editor.HasSource;
     }
 
     private void ApplyTabStyle()
@@ -800,7 +994,42 @@ public partial class MainWindow : Window
             : $"Đã chọn {_items.Count} tệp";
         BatchProgressText.Text = $"{activeItems.Count(item => item.Status == JobStatus.Completed)} / {activeItems.Length} hoàn thành";
         UpdateBatchProgress();
+        UpdateSelectedState();
         UpdateActionButtons();
+    }
+
+    private void UpdateSelectedState()
+    {
+        var item = _selected;
+        var processing = _processingCts is not null;
+        if (item is null)
+        {
+            SelectionStateText.Text = "Chưa chọn tệp";
+            ErrorPanel.IsVisible = false;
+            ErrorText.Text = string.Empty;
+            ConfirmMaskButton.IsEnabled = false;
+            PreviewButton.IsEnabled = false;
+            RescanButton.IsEnabled = false;
+            ManualButton.IsEnabled = false;
+            EmptyState.IsVisible = true;
+            return;
+        }
+
+        PreviewButton.Content = item.Kind == MediaKind.Video ? "Preview 3 giây" : "Preview ảnh";
+        SelectionStateText.Text = item.MaskConfirmed
+            ? "Mask đã xác nhận"
+            : item.HasMaskContent
+                ? "Mask cần xác nhận"
+                : item.HasError
+                    ? "Không đọc được tệp"
+                    : "Chưa chọn vùng";
+        ErrorPanel.IsVisible = item.HasError;
+        ErrorText.Text = item.Error ?? string.Empty;
+        EmptyState.IsVisible = !Editor.HasSource;
+        ConfirmMaskButton.IsEnabled = !processing && item.HasMaskContent && !item.MaskConfirmed && !item.HasError;
+        PreviewButton.IsEnabled = !processing && item.MaskConfirmed && item.HasMaskContent && _inferenceReady;
+        RescanButton.IsEnabled = !processing && item.Kind == MediaKind.Video && _utilityReady && !item.HasError;
+        ManualButton.IsEnabled = !processing && Editor.HasSource;
     }
 
     private void UpdateBatchProgress()
@@ -821,31 +1050,48 @@ public partial class MainWindow : Window
         var selectedStatus = _selected?.Status;
         CancelButton.IsEnabled = processing || selectedStatus is JobStatus.Paused or JobStatus.Queued or JobStatus.Failed;
         ResumeButton.IsEnabled = !processing && (_selected?.Status == JobStatus.Paused || _items.Any(item => item.Status == JobStatus.Paused));
-        RetryButton.IsEnabled = !processing && _selected is not null && JobStatePolicy.CanRetry(_selected.Status);
-        ProcessButton.IsEnabled = !processing && _items.Any(item => item.Kind == _activeTab && item.Status is not (JobStatus.Completed or JobStatus.Running));
-        AutoButton.IsEnabled = !processing && _selected?.Kind == MediaKind.Video;
-        Editor.IsEnabled = !processing;
+        RetryButton.IsEnabled = !processing && _selected is not null && _selected.MaskConfirmed && JobStatePolicy.CanRetry(_selected.Status);
+        ProcessButton.IsEnabled = !processing && _inferenceReady
+            && _items.Any(item => item.Kind == _activeTab && item.MaskConfirmed && item.HasMaskContent
+                && item.Status is not (JobStatus.Completed or JobStatus.Running or JobStatus.Queued));
+        AutoButton.IsEnabled = !processing && _selected?.Kind == MediaKind.Video && _utilityReady && !_selected.HasError;
+        Editor.IsEnabled = !processing && Editor.HasSource;
+        UpdateSelectedState();
     }
 
     private void SetBusy(bool busy, string? text = null)
     {
-        ProcessButton.IsEnabled = !busy;
-        ManualButton.IsEnabled = !busy;
-        AutoButton.IsEnabled = !busy && _selected?.Kind == MediaKind.Video;
-        Editor.IsEnabled = !busy;
+        Editor.IsEnabled = !busy && Editor.HasSource;
         if (text is not null) StatusText.Text = text;
+        if (busy)
+        {
+            ProcessButton.IsEnabled = false;
+            ManualButton.IsEnabled = false;
+            AutoButton.IsEnabled = false;
+            ConfirmMaskButton.IsEnabled = false;
+            PreviewButton.IsEnabled = false;
+            RescanButton.IsEnabled = false;
+        }
+        else UpdateActionButtons();
     }
 
     private void SetQueueBusy(bool busy)
     {
-        ProcessButton.IsEnabled = !busy;
-        ManualButton.IsEnabled = !busy;
-        AutoButton.IsEnabled = !busy && _selected?.Kind == MediaKind.Video;
         PauseButton.IsEnabled = busy;
         CancelButton.IsEnabled = busy;
         ResumeButton.IsEnabled = false;
         RetryButton.IsEnabled = false;
-        Editor.IsEnabled = !busy;
+        Editor.IsEnabled = !busy && Editor.HasSource;
+        if (busy)
+        {
+            ProcessButton.IsEnabled = false;
+            ManualButton.IsEnabled = false;
+            AutoButton.IsEnabled = false;
+            ConfirmMaskButton.IsEnabled = false;
+            PreviewButton.IsEnabled = false;
+            RescanButton.IsEnabled = false;
+        }
+        else UpdateActionButtons();
     }
 
     private void DisposeProcessingState()
@@ -870,12 +1116,8 @@ public partial class MainWindow : Window
     {
         if (!ReferenceEquals(item, _runningItem)) CleanupDirectory(JobStateDirectory(item));
         item.Progress = 0;
-        if (item.Status is JobStatus.Paused or JobStatus.Failed or JobStatus.Cancelled or JobStatus.Completed)
-            item.Status = item.Mask.Operations.Count > 0
-                || !string.IsNullOrWhiteSpace(item.SuggestedMaskPath)
-                || !string.IsNullOrWhiteSpace(item.MaskPath)
-                ? JobStatus.Ready
-                : JobStatus.WaitingForMask;
+        if (item.Status is JobStatus.Paused or JobStatus.Failed or JobStatus.Cancelled or JobStatus.Completed or JobStatus.Ready)
+            item.Status = item.MaskConfirmed && item.HasMaskContent ? JobStatus.Ready : JobStatus.WaitingForMask;
     }
 
     private void CleanupItemFiles(MediaItem item)

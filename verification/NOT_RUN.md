@@ -1,13 +1,11 @@
-# Chưa chạy trong môi trường tạo source
-
-Môi trường tạo gói source này không có .NET SDK và không tải được dependency/runtime lớn từ Internet, nên các bước sau **chưa được chạy tại đây**:
+# Chưa chạy trong môi trường hiện tại
 
 - `dotnet restore`
+- `dotnet build`
 - `dotnet test`
-- `dotnet publish` Windows x64
-- tải source `advimman/lama` và `big-lama.zip`
-- nạp checkpoint LaMa gốc / CPU self-test thật
-- video integration test 3 giây bằng checkpoint thật
-- mở artifact trên máy Windows thực tế
+- `dotnet publish -r win-x64`
+- Mở cửa sổ Avalonia trên Windows
+- Original LaMa checkpoint self-test
+- Original LaMa video integration test
 
-GitHub Actions trong source được cấu hình để thực hiện các bước đó. Chỉ coi là có build Windows khi workflow chạy xanh và có artifact `ERASA-VIDEO-Windows-x64`.
+Lý do: môi trường hiện tại không có .NET SDK và không phải Windows. GitHub Actions chứa các bước build, packaged runtime diagnostics, desktop startup smoke test, original-LaMa CPU self-test và video integration test. Chỉ lần Actions mới có dấu xanh mới là bằng chứng cho các bước này.

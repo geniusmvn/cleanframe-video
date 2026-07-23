@@ -1,63 +1,79 @@
 {
-  "artifact_kind": "source-only milestone",
-  "product": "ERASA VIDEO",
-  "version": "0.2.0",
-  "generated_utc": "2026-07-22T17:40:25.429828+00:00",
-  "original_lama": {
-    "repository": "https://github.com/advimman/lama",
-    "commit": "786f5936b27fb3dacd2b1ad799e4de968ea697e7",
-    "loading_contract": "saicinpainting.training.trainers.load_checkpoint + config.yaml + models/best.ckpt",
-    "converted_runtime_used": false
-  },
-  "actually_run": [
-    {
-      "name": "Python worker unit tests",
-      "result": "PASS",
-      "count": 6,
+  "version": "0.3.0",
+  "artifact_kind": "source-only",
+  "local_checks": {
+    "python_unit_tests": {
+      "passed": true,
+      "count": 7,
       "log": "verification/python-unit-tests.txt"
     },
-    {
-      "name": "Python syntax/AST",
-      "result": "PASS"
+    "python_syntax": {
+      "passed": true,
+      "files": [
+        "worker/erasa_worker.py",
+        "scripts/verify-source.py"
+      ]
     },
-    {
-      "name": "AXAML/csproj/props XML parse",
-      "result": "PASS",
+    "source_static_checks": {
+      "passed": true,
+      "details": {
+        "python_ast_files": 3,
+        "xml_files": 9,
+        "workflow_yaml": true,
+        "upstream_pins": true,
+        "direct_original_lama": true,
+        "xaml_event_handlers": 40,
+        "csharp_brace_files": 26,
+        "csharp_numeric_type_guard": true,
+        "avalonia_input_namespace_guard": true,
+        "ui_media_loading_is_independent_from_lama": true,
+        "ui_requires_explicit_mask_confirmation": true,
+        "ui_worker_error_isolation": true,
+        "main_window_workflow_controls": 10,
+        "ci_media_ui_original_lama_contracts": true,
+        "application_version": "0.3.0",
+        "brand_assets": true
+      }
+    },
+    "ffmpeg_media_command_smoke": {
+      "passed": true,
+      "input_resolution": [
+        160,
+        90
+      ],
+      "audio_codec": "aac",
+      "preview_bytes": 12615,
+      "ffmpeg_command_contract": "same -ss/-i/-frames:v/-vf argument structure used by MediaToolService"
+    },
+    "xml_axaml_project_parse": {
+      "passed": true,
       "count": 9
     },
-    {
-      "name": "GitHub Actions YAML parse",
-      "result": "PASS"
+    "workflow_yaml_parse": {
+      "passed": true
     },
-    {
-      "name": "XAML event handler linkage static check",
-      "result": "PASS",
-      "count": 37
-    },
-    {
-      "name": "C# gross brace/static source integrity",
-      "result": "PASS",
-      "count": 23
-    },
-    {
-      "name": "Direct original-LaMa wiring/static banned-runtime check",
-      "result": "PASS"
-    },
-    {
-      "name": "Brand asset existence",
-      "result": "PASS"
+    "zip_crc": {
+      "passed": null,
+      "note": "filled after package creation"
     }
-  ],
-  "not_run_here": [
+  },
+  "not_run": [
     "dotnet restore",
+    "dotnet build",
     "dotnet test",
-    "dotnet publish win-x64",
-    "download original LaMa/model runtime",
-    "original checkpoint CPU self-test",
-    "3-second LaMa video/audio integration test",
-    "Windows artifact launch"
+    "Windows publish",
+    "Avalonia desktop startup",
+    "original LaMa checkpoint self-test",
+    "original LaMa video integration"
   ],
-  "source_file_count_excluding_verification_metadata": 55,
-  "source_manifest_sha256": "999637ce1b8a169ed1078fc20b4d4e7fc3f4a0a8acbbb487d1b8a510e9495496",
-  "scope_note": "SHA256.txt hashes files excluding SHA256.txt, SOURCE_INVENTORY.txt and VERIFICATION.json to avoid self-reference."
+  "claims": {
+    "media_loading_decoupled_from_lama": true,
+    "mask_requires_explicit_confirmation": true,
+    "original_lama_direct_source_wiring": true,
+    "windows_build_success": false
+  },
+  "environment": {
+    "python": "3.13.5",
+    "platform": "Linux-6.12.13-x86_64-with-glibc2.41"
+  }
 }

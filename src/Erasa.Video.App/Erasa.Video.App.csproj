@@ -9,9 +9,9 @@
     <ApplicationIcon>Assets\erasa.ico</ApplicationIcon>
     <AssemblyName>ERASA.Video</AssemblyName>
     <RootNamespace>Erasa.Video.App</RootNamespace>
-    <Version>0.2.0</Version>
-    <FileVersion>0.2.0.0</FileVersion>
-    <AssemblyVersion>0.2.0.0</AssemblyVersion>
+    <Version>0.3.0</Version>
+    <FileVersion>0.3.0.0</FileVersion>
+    <AssemblyVersion>0.3.0.0</AssemblyVersion>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Avalonia" />

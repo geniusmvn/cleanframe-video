@@ -1,11 +1,13 @@
-# Kiến trúc ERASA VIDEO
+# Kiến trúc ERASA VIDEO 0.3
 
 ## Desktop UI
 
 - .NET 8 + Avalonia 11.
-- UI process không nạp PyTorch hoặc model.
-- `WorkerClient` khởi chạy Python đóng gói như process riêng và đọc JSON Lines UTF-8.
-- Mọi exception từ worker được chuyển thành trạng thái job và log, không gọi `Environment.Exit`.
+- `MediaToolService` gọi FFmpeg/FFprobe trực tiếp để đọc metadata và thumbnail.
+- Canvas chỉnh mask không phụ thuộc Python, PyTorch hoặc model.
+- `WorkerClient` chỉ khởi chạy Python khi cần tự động đề xuất hoặc inference.
+- Utility runtime và inference runtime được chẩn đoán riêng.
+- Mọi exception được chuyển thành trạng thái job, error panel và log; không gọi `Environment.Exit` hoặc `FailFast`.
 
 ## Original LaMa worker
 
@@ -19,10 +21,17 @@
 6. lấy output `batch["inpainted"]`;
 7. composite lại pixel raw ngoài mask.
 
+## Mask confirmation
+
+- Tự động đề xuất và thao tác vẽ chỉ tạo/chỉnh dữ liệu mask.
+- Mọi thay đổi làm `MaskConfirmed = false`.
+- Chỉ nút **Xác nhận mask** mới chuyển job sang `Ready`.
+- Preview và queue filter bỏ qua mọi job chưa được xác nhận.
+
 ## Video
 
-- FFmpeg decode thành BGR24 raw frames.
-- Mỗi frame chạy qua cùng model LaMa gốc và mask được xác nhận.
-- Encode H.264 theo đoạn ngắn để có checkpoint.
-- Ghép segment bằng stream copy, sau đó mux audio nguồn.
+- FFmpeg decode BGR24 raw frames.
+- Mỗi frame chạy cùng original-LaMa checkpoint và mask xác nhận.
+- Encode H.264 theo segment ngắn để có checkpoint resume.
+- Ghép segment và mux audio nguồn.
 - Xác minh metadata output trước khi báo hoàn thành.

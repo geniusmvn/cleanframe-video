@@ -21,6 +21,7 @@ public sealed record PersistedMediaItem
     public JobStatus Status { get; init; }
     public double Progress { get; init; }
     public string? Error { get; init; }
+    public bool MaskConfirmed { get; init; }
 }
 
 public sealed class QueueStateStore
@@ -52,7 +53,8 @@ public sealed class QueueStateStore
             Height = item.Height,
             Status = item.Status == JobStatus.Running ? JobStatus.Paused : item.Status,
             Progress = item.Progress,
-            Error = item.Error
+            Error = item.Error,
+            MaskConfirmed = item.MaskConfirmed
         }).ToArray();
         Directory.CreateDirectory(Path.GetDirectoryName(StatePath)!);
         var temporary = StatePath + ".tmp";
@@ -84,7 +86,8 @@ public sealed class QueueStateStore
                 Height = x.Height,
                 Status = x.Status == JobStatus.Running ? JobStatus.Paused : x.Status,
                 Progress = x.Progress,
-                Error = x.Error
+                Error = x.Error,
+                MaskConfirmed = x.MaskConfirmed
             }).ToArray();
         }
         catch (Exception ex)
