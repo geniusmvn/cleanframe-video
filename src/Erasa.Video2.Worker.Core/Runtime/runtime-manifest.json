@@ -1,5 +1,5 @@
 {
-  "version": "1.2.1",
+  "version": "1.2.2",
   "python": {
     "url": "https://www.python.org/ftp/python/3.8.10/python-3.8.10-embed-amd64.zip"
   },
@@ -23,12 +23,12 @@
   "torchCuda": "torch==1.8.2+cu111",
   "torchFindLinks": "https://download.pytorch.org/whl/lts/1.8/torch_lts.html",
   "lightningPackages": [
-    "future==0.18.3",
     "tqdm==4.60.0",
     "fsspec[http]==2021.4.0",
     "tensorboard==2.4.1",
     "protobuf==3.20.3",
     "torchmetrics==0.2.0",
     "pytorch-lightning==1.2.9"
-  ]
+  ],
+  "futurePackage": "future==1.0.0"
 }

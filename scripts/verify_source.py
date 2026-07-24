@@ -145,6 +145,10 @@ def main() -> int:
     }
     if not required_lightning.issubset(set(manifest.get('lightningPackages', []))):
         raise AssertionError('Original LaMa checkpoint compatibility dependencies are not pinned.')
+    if manifest.get('futurePackage') != 'future==1.0.0':
+        raise AssertionError('A wheel-backed future package is not pinned.')
+    if any(item.startswith('future==') for item in manifest.get('lightningPackages', [])):
+        raise AssertionError('future must be installed separately from the Lightning stack.')
     builder_source = runtime_builder_path.read_text(encoding='utf-8')
     if builder_source.index('Runtime imports OK:') > builder_source.index('model_item = manifest["model"]'):
         raise AssertionError('Runtime dependency probe must run before the large model download.')

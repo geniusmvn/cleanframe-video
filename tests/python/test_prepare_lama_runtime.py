@@ -66,13 +66,17 @@ class PrepareRuntimeTests(unittest.TestCase):
             "protobuf==3.20.3",
         }
         self.assertTrue(required.issubset(set(manifest["lightningPackages"])))
+        self.assertEqual("future==1.0.0", manifest["futurePackage"])
+        self.assertFalse(any(item.startswith("future==") for item in manifest["lightningPackages"]))
 
     def test_runtime_import_probe_runs_before_model_download(self) -> None:
         source = SCRIPT.read_text(encoding="utf-8")
         probe = source.index("Runtime imports OK:")
         model = source.index('model_item = manifest["model"]')
         self.assertLess(probe, model)
-        self.assertIn('*manifest["lightningPackages"]', source)
+        self.assertIn('manifest["futurePackage"]', source)
+        self.assertIn('"--only-binary=:all:", manifest["futurePackage"]', source)
+        self.assertIn('"--only-binary=:all:", *manifest["lightningPackages"]', source)
 
 
 if __name__ == "__main__":

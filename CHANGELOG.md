@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.2 — wheel-only future dependency
+
+- Thay `future==0.18.3` bằng `future==1.0.0` có wheel `py3-none-any`.
+- Không còn chạy `setup.py` của future trong Python nhúng.
+- Ép toàn bộ dependency Lightning dùng binary wheel.
+
 ## 1.2.1 — original checkpoint compatibility
 
 - Bổ sung đúng `pytorch-lightning==1.2.9` và các dependency tương thích mà checkpoint Big-LaMa gốc cần khi giải tuần tự.

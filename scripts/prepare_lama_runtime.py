@@ -262,13 +262,19 @@ def build_runtime(runtime: Path, manifest_path: Path, bridge: Path, profile: str
         "--only-binary=:all:", *manifest["basePackages"],
     ])
 
-    # Big-LaMa checkpoints were produced by the original PyTorch-Lightning stack.
-    # Install that pinned compatibility stack separately: `future` is source-only,
-    # so this command must not use --only-binary=:all:.
+    # Install `future` from a universal wheel. Older future 0.18.x releases only
+    # publish source archives and their setup.py fails in embedded Python builds.
     run([
         python_exe, "-X", "utf8", "-m", "pip", "install",
         "--no-cache-dir", "--disable-pip-version-check", "--no-warn-script-location",
-        *manifest["lightningPackages"],
+        "--only-binary=:all:", manifest["futurePackage"],
+    ])
+
+    # Big-LaMa checkpoints were produced by the original PyTorch-Lightning stack.
+    run([
+        python_exe, "-X", "utf8", "-m", "pip", "install",
+        "--no-cache-dir", "--disable-pip-version-check", "--no-warn-script-location",
+        "--only-binary=:all:", *manifest["lightningPackages"],
     ])
 
     # Fail before downloading the large model if the embedded runtime is incomplete.
