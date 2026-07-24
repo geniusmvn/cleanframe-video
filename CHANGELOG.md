@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.1 — original checkpoint compatibility
+
+- Bổ sung đúng `pytorch-lightning==1.2.9` và các dependency tương thích mà checkpoint Big-LaMa gốc cần khi giải tuần tự.
+- Tách dependency source-only khỏi lệnh `--only-binary` để `future` cài được.
+- Kiểm tra import runtime trước khi tải model lớn.
+- LaMa bridge ghi traceback đầy đủ khi self-test lỗi.
+- Giảm log tải xuống còn theo mốc khoảng 5%.
+
 ## 1.2.0 — tested runtime bundle
 
 - Không cài Python/model bằng worker trong CI hoặc lúc người dùng bấm xử lý.

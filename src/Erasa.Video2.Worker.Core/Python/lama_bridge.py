@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import sys
+import traceback
 import types
 from pathlib import Path
 from typing import Iterable, Optional
@@ -598,7 +599,7 @@ def main() -> int:
         return 130
     except Exception as error:
         emit("failed", None, str(error), error=str(error))
-        print(str(error), file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
         return 1
 
 

@@ -59,7 +59,20 @@ class PrepareRuntimeTests(unittest.TestCase):
             (ROOT / "src" / "Erasa.Video2.Worker.Core" / "Runtime" / "runtime-manifest.json").read_text(encoding="utf-8")
         )
         self.assertIn("advimman/lama/archive/786f5936b27fb3dacd2b1ad799e4de968ea697e7.zip", manifest["lamaSource"]["url"])
-        self.assertEqual("1.2.0", manifest["version"])
+        required = {
+            "pytorch-lightning==1.2.9",
+            "torchmetrics==0.2.0",
+            "tensorboard==2.4.1",
+            "protobuf==3.20.3",
+        }
+        self.assertTrue(required.issubset(set(manifest["lightningPackages"])))
+
+    def test_runtime_import_probe_runs_before_model_download(self) -> None:
+        source = SCRIPT.read_text(encoding="utf-8")
+        probe = source.index("Runtime imports OK:")
+        model = source.index('model_item = manifest["model"]')
+        self.assertLess(probe, model)
+        self.assertIn('*manifest["lightningPackages"]', source)
 
 
 if __name__ == "__main__":

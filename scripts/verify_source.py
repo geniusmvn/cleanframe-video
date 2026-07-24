@@ -137,6 +137,23 @@ def main() -> int:
         raise AssertionError('Original LaMa commit is not pinned.')
     result['pinned_upstream_commit'] = '786f5936b27fb3dacd2b1ad799e4de968ea697e7'
 
+    required_lightning = {
+        'pytorch-lightning==1.2.9',
+        'torchmetrics==0.2.0',
+        'tensorboard==2.4.1',
+        'protobuf==3.20.3',
+    }
+    if not required_lightning.issubset(set(manifest.get('lightningPackages', []))):
+        raise AssertionError('Original LaMa checkpoint compatibility dependencies are not pinned.')
+    builder_source = runtime_builder_path.read_text(encoding='utf-8')
+    if builder_source.index('Runtime imports OK:') > builder_source.index('model_item = manifest["model"]'):
+        raise AssertionError('Runtime dependency probe must run before the large model download.')
+    if 'traceback.print_exc(file=sys.stderr)' not in (
+        ROOT / 'src/Erasa.Video2.Worker.Core/Python/lama_bridge.py'
+    ).read_text(encoding='utf-8'):
+        raise AssertionError('LaMa bridge does not emit a diagnostic traceback.')
+    result['original_lama_checkpoint_dependencies'] = True
+
 
     # Architecture 1.1 guards: tests never reference the executable host and CI is layered.
     test_project = (ROOT / "tests" / "Erasa.Video2.Tests" / "Erasa.Video2.Tests.csproj").read_text(encoding="utf-8")

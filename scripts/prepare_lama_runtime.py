@@ -55,6 +55,7 @@ def download(url: str, target: Path, expected_sha256: str | None = None, retries
                 total_header = response.headers.get("Content-Length")
                 total = int(total_header) if total_header and total_header.isdigit() else 0
                 received = 0
+                last_reported = -5
                 while True:
                     block = response.read(CHUNK_SIZE)
                     if not block:
@@ -63,7 +64,9 @@ def download(url: str, target: Path, expected_sha256: str | None = None, retries
                     received += len(block)
                     if total:
                         percent = min(100, round(received * 100 / total))
-                        log(f"Tải {target.name}: {percent}%")
+                        if percent == 100 or percent // 5 > last_reported // 5:
+                            log(f"Tải {target.name}: {percent}%")
+                            last_reported = percent
             if not verify_file(partial, expected_sha256):
                 raise RuntimeError(f"Checksum không khớp: {target.name}")
             os.replace(partial, target)
@@ -257,6 +260,24 @@ def build_runtime(runtime: Path, manifest_path: Path, bridge: Path, profile: str
         python_exe, "-X", "utf8", "-m", "pip", "install",
         "--no-cache-dir", "--disable-pip-version-check", "--no-warn-script-location",
         "--only-binary=:all:", *manifest["basePackages"],
+    ])
+
+    # Big-LaMa checkpoints were produced by the original PyTorch-Lightning stack.
+    # Install that pinned compatibility stack separately: `future` is source-only,
+    # so this command must not use --only-binary=:all:.
+    run([
+        python_exe, "-X", "utf8", "-m", "pip", "install",
+        "--no-cache-dir", "--disable-pip-version-check", "--no-warn-script-location",
+        *manifest["lightningPackages"],
+    ])
+
+    # Fail before downloading the large model if the embedded runtime is incomplete.
+    run([
+        python_exe, "-X", "utf8", "-c",
+        (
+            "import torch, cv2, yaml, kornia, pytorch_lightning, torchmetrics; "
+            "print('Runtime imports OK:', torch.__version__, pytorch_lightning.__version__, torchmetrics.__version__)"
+        ),
     ])
 
     source_item = manifest["lamaSource"]
