@@ -1,3 +1,0 @@
-Sửa lỗi job 4: No module named 'pytorch_lightning'.
-Chép CHANGELOG.md, scripts, src và tests vào gốc repo rồi chọn Replace.
-Commit: Fix original LaMa checkpoint dependencies

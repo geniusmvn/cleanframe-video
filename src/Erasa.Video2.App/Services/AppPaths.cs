@@ -8,11 +8,8 @@ public static class AppPaths
 
     public static string QueueFile => Path.Combine(Root, "queue.json");
     public static string SettingsFile => Path.Combine(Root, "settings.json");
-    public static string LocalRuntimeDirectory => Path.Combine(Root, "runtime");
     public static string BundledRuntimeDirectory => Path.Combine(AppContext.BaseDirectory, "runtime");
-    public static string RuntimeDirectory => IsRuntimeComplete(BundledRuntimeDirectory)
-        ? BundledRuntimeDirectory
-        : LocalRuntimeDirectory;
+    public static string RuntimeDirectory => BundledRuntimeDirectory;
     public static string JobsDirectory => Path.Combine(Root, "jobs");
     public static string LogFile => Path.Combine(Root, "logs", "erasa.log");
 
@@ -35,5 +32,6 @@ public static class AppPaths
            && File.Exists(Path.Combine(directory, "python", "python.exe"))
            && File.Exists(Path.Combine(directory, "lama-source", "saicinpainting", "training", "modules", "ffc.py"))
            && File.Exists(Path.Combine(directory, "model", "config.yaml"))
-           && File.Exists(Path.Combine(directory, "model", "models", "best.ckpt"));
+           && File.Exists(Path.Combine(directory, "model", "generator.safetensors"))
+           && File.Exists(Path.Combine(directory, "model", "export-metadata.json"));
 }

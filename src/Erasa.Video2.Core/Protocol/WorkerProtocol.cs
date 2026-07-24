@@ -9,7 +9,6 @@ public static class WorkerCommands
     public const string Probe = "probe";
     public const string Thumbnail = "thumbnail";
     public const string RuntimeStatus = "runtime-status";
-    public const string RuntimeInstall = "runtime-install";
     public const string Suggest = "suggest";
     public const string Preview = "preview";
     public const string Process = "process";

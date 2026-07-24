@@ -37,46 +37,42 @@ class PrepareRuntimeTests(unittest.TestCase):
             self.assertTrue((destination / "LICENSE").is_file())
             self.assertTrue((destination / "saicinpainting" / "training" / "modules" / "ffc.py").is_file())
 
-    def test_runtime_complete_requires_all_core_files(self) -> None:
+    def test_runtime_complete_requires_safetensors_export(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             runtime = Path(temporary)
             required = [
                 runtime / "python" / "python.exe",
                 runtime / "lama-source" / "saicinpainting" / "training" / "modules" / "ffc.py",
                 runtime / "model" / "config.yaml",
-                runtime / "model" / "models" / "best.ckpt",
+                runtime / "model" / "generator.safetensors",
+                runtime / "model" / "export-metadata.json",
                 runtime / "runtime.ready.json",
             ]
             for path in required:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(b"x")
             self.assertTrue(runtime_builder.runtime_is_complete(runtime))
-            required[-1].unlink()
+            required[3].unlink()
             self.assertFalse(runtime_builder.runtime_is_complete(runtime))
 
-    def test_manifest_is_pinned_to_original_lama(self) -> None:
+    def test_manifest_has_no_lightning_runtime_dependencies(self) -> None:
         manifest = json.loads(
             (ROOT / "src" / "Erasa.Video2.Worker.Core" / "Runtime" / "runtime-manifest.json").read_text(encoding="utf-8")
         )
+        self.assertEqual("1.3.0", manifest["version"])
         self.assertIn("advimman/lama/archive/786f5936b27fb3dacd2b1ad799e4de968ea697e7.zip", manifest["lamaSource"]["url"])
-        required = {
-            "pytorch-lightning==1.2.9",
-            "torchmetrics==0.2.0",
-            "tensorboard==2.4.1",
-            "protobuf==3.20.3",
-        }
-        self.assertTrue(required.issubset(set(manifest["lightningPackages"])))
-        self.assertEqual("future==1.0.0", manifest["futurePackage"])
-        self.assertFalse(any(item.startswith("future==") for item in manifest["lightningPackages"]))
+        serialized = json.dumps(manifest).lower()
+        self.assertNotIn("pytorch-lightning", serialized)
+        self.assertNotIn("torchmetrics", serialized)
+        self.assertNotIn("tensorboard", serialized)
+        self.assertIn("safetensors==0.4.5", manifest["basePackages"])
 
-    def test_runtime_import_probe_runs_before_model_download(self) -> None:
+    def test_builder_consumes_export_instead_of_raw_checkpoint(self) -> None:
         source = SCRIPT.read_text(encoding="utf-8")
-        probe = source.index("Runtime imports OK:")
-        model = source.index('model_item = manifest["model"]')
-        self.assertLess(probe, model)
-        self.assertIn('manifest["futurePackage"]', source)
-        self.assertIn('"--only-binary=:all:", manifest["futurePackage"]', source)
-        self.assertIn('"--only-binary=:all:", *manifest["lightningPackages"]', source)
+        self.assertIn("validate_export(export)", source)
+        self.assertIn("generator.safetensors", source)
+        self.assertNotIn("best.ckpt", source)
+        self.assertNotIn("pytorch_lightning", source)
 
 
 if __name__ == "__main__":

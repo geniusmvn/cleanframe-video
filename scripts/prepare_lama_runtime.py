@@ -7,7 +7,6 @@ import os
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -16,7 +15,7 @@ from pathlib import Path
 from typing import Iterable
 
 CHUNK_SIZE = 1024 * 1024
-USER_AGENT = "ERASA-VIDEO-2-runtime-builder/1.2"
+USER_AGENT = "ERASA-VIDEO-2-runtime-builder/1.3"
 
 
 def log(message: str) -> None:
@@ -34,9 +33,7 @@ def sha256_file(path: Path) -> str:
 def verify_file(path: Path, expected_sha256: str | None = None) -> bool:
     if not path.is_file() or path.stat().st_size <= 0:
         return False
-    if not expected_sha256:
-        return True
-    return sha256_file(path).lower() == expected_sha256.lower()
+    return not expected_sha256 or sha256_file(path).lower() == expected_sha256.lower()
 
 
 def download(url: str, target: Path, expected_sha256: str | None = None, retries: int = 4) -> Path:
@@ -44,18 +41,17 @@ def download(url: str, target: Path, expected_sha256: str | None = None, retries
     if verify_file(target, expected_sha256):
         log(f"Dùng tệp đã có: {target.name}")
         return target
-
     partial = target.with_suffix(target.suffix + ".partial")
     partial.unlink(missing_ok=True)
     last_error: Exception | None = None
     for attempt in range(1, retries + 1):
         try:
             request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-            with urllib.request.urlopen(request, timeout=120) as response, partial.open("wb") as output:
+            with urllib.request.urlopen(request, timeout=180) as response, partial.open("wb") as output:
                 total_header = response.headers.get("Content-Length")
                 total = int(total_header) if total_header and total_header.isdigit() else 0
                 received = 0
-                last_reported = -5
+                reported = -10
                 while True:
                     block = response.read(CHUNK_SIZE)
                     if not block:
@@ -64,9 +60,9 @@ def download(url: str, target: Path, expected_sha256: str | None = None, retries
                     received += len(block)
                     if total:
                         percent = min(100, round(received * 100 / total))
-                        if percent == 100 or percent // 5 > last_reported // 5:
+                        if percent == 100 or percent // 10 > reported // 10:
                             log(f"Tải {target.name}: {percent}%")
-                            last_reported = percent
+                            reported = percent
             if not verify_file(partial, expected_sha256):
                 raise RuntimeError(f"Checksum không khớp: {target.name}")
             os.replace(partial, target)
@@ -75,8 +71,8 @@ def download(url: str, target: Path, expected_sha256: str | None = None, retries
             last_error = error
             partial.unlink(missing_ok=True)
             if attempt < retries:
-                delay = attempt * 3
-                log(f"Tải {target.name} thất bại lần {attempt}: {error}. Thử lại sau {delay}s…")
+                delay = attempt * 4
+                log(f"Tải {target.name} lỗi lần {attempt}: {error}; thử lại sau {delay}s")
                 time.sleep(delay)
     raise RuntimeError(f"Không tải được {target.name}: {last_error}")
 
@@ -93,19 +89,8 @@ def safe_extract_zip(archive: Path, destination: Path) -> None:
 
 
 def recreate_directory(path: Path) -> None:
-    if path.exists():
-        shutil.rmtree(path)
+    shutil.rmtree(path, ignore_errors=True)
     path.mkdir(parents=True, exist_ok=True)
-
-
-def copy_tree_contents(source: Path, destination: Path) -> None:
-    destination.mkdir(parents=True, exist_ok=True)
-    for item in source.iterdir():
-        target = destination / item.name
-        if item.is_dir():
-            shutil.copytree(item, target, dirs_exist_ok=True)
-        else:
-            shutil.copy2(item, target)
 
 
 def extract_single_root_archive(archive: Path, destination: Path) -> None:
@@ -116,26 +101,7 @@ def extract_single_root_archive(archive: Path, destination: Path) -> None:
         safe_extract_zip(archive, temporary)
         children = list(temporary.iterdir())
         root = children[0] if len(children) == 1 and children[0].is_dir() else temporary
-        copy_tree_contents(root, destination)
-    finally:
-        shutil.rmtree(temporary, ignore_errors=True)
-
-
-def extract_model_archive(archive: Path, destination: Path) -> None:
-    recreate_directory(destination)
-    temporary = destination.with_name(destination.name + ".extract")
-    recreate_directory(temporary)
-    try:
-        safe_extract_zip(archive, temporary)
-        configs = list(temporary.rglob("config.yaml"))
-        checkpoints = list(temporary.rglob("best.ckpt"))
-        if not configs:
-            raise RuntimeError("Model archive không có config.yaml")
-        if not checkpoints:
-            raise RuntimeError("Model archive không có models/best.ckpt")
-        shutil.copy2(configs[0], destination / "config.yaml")
-        (destination / "models").mkdir(parents=True, exist_ok=True)
-        shutil.copy2(checkpoints[0], destination / "models" / "best.ckpt")
+        shutil.copytree(root, destination, dirs_exist_ok=True)
     finally:
         shutil.rmtree(temporary, ignore_errors=True)
 
@@ -143,10 +109,10 @@ def extract_model_archive(archive: Path, destination: Path) -> None:
 def enable_embedded_site(python_directory: Path) -> None:
     candidates = sorted(python_directory.glob("python*._pth"))
     if not candidates:
-        raise RuntimeError("Python embedded thiếu file python*._pth")
+        raise RuntimeError("Python embedded thiếu python*._pth")
     pth = candidates[0]
     lines = pth.read_text(encoding="utf-8-sig").splitlines()
-    updated: list[str] = []
+    updated = []
     site_present = False
     for line in lines:
         if line.strip() in {"#import site", "import site"}:
@@ -189,7 +155,8 @@ def runtime_is_complete(runtime: Path) -> bool:
         runtime / "python" / "python.exe",
         runtime / "lama-source" / "saicinpainting" / "training" / "modules" / "ffc.py",
         runtime / "model" / "config.yaml",
-        runtime / "model" / "models" / "best.ckpt",
+        runtime / "model" / "generator.safetensors",
+        runtime / "model" / "export-metadata.json",
         runtime / "runtime.ready.json",
     ]
     return all(path.is_file() and path.stat().st_size > 0 for path in required)
@@ -199,26 +166,43 @@ def validate_original_source(source: Path) -> None:
     ffc = source / "saicinpainting" / "training" / "modules" / "ffc.py"
     license_file = source / "LICENSE"
     if not ffc.is_file() or "class FFCResNetGenerator" not in ffc.read_text(encoding="utf-8"):
-        raise RuntimeError("Source tải về không đúng cấu trúc advimman/lama")
+        raise RuntimeError("Source tải về không đúng advimman/lama")
     if not license_file.is_file():
         raise RuntimeError("Source advimman/lama thiếu LICENSE")
 
 
-def build_runtime(runtime: Path, manifest_path: Path, bridge: Path, profile: str, force: bool) -> None:
+def validate_export(export: Path) -> dict:
+    config = export / "config.yaml"
+    state = export / "generator.safetensors"
+    metadata_path = export / "export-metadata.json"
+    if not config.is_file() or not state.is_file() or not metadata_path.is_file():
+        raise RuntimeError("Artifact generator thiếu config.yaml, generator.safetensors hoặc metadata")
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    if metadata.get("upstream_commit") != "786f5936b27fb3dacd2b1ad799e4de968ea697e7":
+        raise RuntimeError("Artifact generator không đúng commit LaMa đã ghim")
+    if metadata.get("generator_sha256") != sha256_file(state):
+        raise RuntimeError("Checksum generator.safetensors không khớp metadata")
+    if metadata.get("config_sha256") != sha256_file(config):
+        raise RuntimeError("Checksum config.yaml không khớp metadata")
+    return metadata
+
+
+def build_runtime(runtime: Path, manifest_path: Path, bridge: Path, export: Path, profile: str, force: bool) -> None:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    export_metadata = validate_export(export)
     expected_marker = {
         "version": manifest["version"],
         "profile": f"{profile}-bundled",
         "upstream": "advimman/lama",
-        "commit": "786f5936b27fb3dacd2b1ad799e4de968ea697e7",
+        "commit": manifest["upstream"]["commit"],
+        "generatorSha256": export_metadata["generator_sha256"],
         "validated": True,
     }
-
     if not force and runtime_is_complete(runtime):
         try:
             marker = json.loads((runtime / "runtime.ready.json").read_text(encoding="utf-8-sig"))
             if all(marker.get(key) == value for key, value in expected_marker.items()):
-                log("Runtime cache đã đầy đủ và đúng phiên bản.")
+                log("Runtime cache đã đầy đủ và đúng generator đã kiểm thử.")
                 return
         except (OSError, json.JSONDecodeError):
             pass
@@ -239,68 +223,38 @@ def build_runtime(runtime: Path, manifest_path: Path, bridge: Path, profile: str
 
     pip_item = manifest["getPip"]
     get_pip = download(pip_item["url"], downloads / "get-pip.py", pip_item.get("sha256"))
-    run([
-        python_exe,
-        "-X", "utf8",
-        get_pip,
-        "--no-warn-script-location",
-        "pip==24.0",
-        "setuptools==69.5.1",
-        "wheel==0.43.0",
-    ])
+    run([python_exe, "-X", "utf8", get_pip, "--no-warn-script-location", "pip==24.3.1", "setuptools==75.3.0", "wheel==0.45.1"])
 
-    torch_package = manifest["torchCuda"] if profile == "cuda" else manifest["torchCpu"]
+    torch_config = manifest["torch"]
+    index_url = torch_config["cudaIndexUrl"] if profile == "cuda" else torch_config["cpuIndexUrl"]
     run([
         python_exe, "-X", "utf8", "-m", "pip", "install",
         "--no-cache-dir", "--disable-pip-version-check", "--no-warn-script-location",
-        torch_package, "-f", manifest["torchFindLinks"],
+        "--index-url", index_url, torch_config["package"],
     ])
-
     run([
         python_exe, "-X", "utf8", "-m", "pip", "install",
         "--no-cache-dir", "--disable-pip-version-check", "--no-warn-script-location",
         "--only-binary=:all:", *manifest["basePackages"],
     ])
-
-    # Install `future` from a universal wheel. Older future 0.18.x releases only
-    # publish source archives and their setup.py fails in embedded Python builds.
-    run([
-        python_exe, "-X", "utf8", "-m", "pip", "install",
-        "--no-cache-dir", "--disable-pip-version-check", "--no-warn-script-location",
-        "--only-binary=:all:", manifest["futurePackage"],
-    ])
-
-    # Big-LaMa checkpoints were produced by the original PyTorch-Lightning stack.
-    run([
-        python_exe, "-X", "utf8", "-m", "pip", "install",
-        "--no-cache-dir", "--disable-pip-version-check", "--no-warn-script-location",
-        "--only-binary=:all:", *manifest["lightningPackages"],
-    ])
-
-    # Fail before downloading the large model if the embedded runtime is incomplete.
     run([
         python_exe, "-X", "utf8", "-c",
-        (
-            "import torch, cv2, yaml, kornia, pytorch_lightning, torchmetrics; "
-            "print('Runtime imports OK:', torch.__version__, pytorch_lightning.__version__, torchmetrics.__version__)"
-        ),
+        "import torch,cv2,yaml,kornia,safetensors; print('Runtime imports OK', torch.__version__)",
     ])
 
     source_item = manifest["lamaSource"]
     source_zip = download(source_item["url"], downloads / "lama-source.zip", source_item.get("sha256"))
-    source_directory = runtime / "lama-source"
-    extract_single_root_archive(source_zip, source_directory)
-    validate_original_source(source_directory)
+    source = runtime / "lama-source"
+    extract_single_root_archive(source_zip, source)
+    validate_original_source(source)
 
-    model_item = manifest["model"]
-    model_zip = download(model_item["url"], downloads / "big-lama.zip", model_item.get("sha256"))
-    extract_model_archive(model_zip, runtime / "model")
+    model = runtime / "model"
+    recreate_directory(model)
+    for name in ("config.yaml", "generator.safetensors", "export-metadata.json"):
+        shutil.copy2(export / name, model / name)
 
-    # Validate the exact embedded runtime before writing the ready marker.
-    run([
-        python_exe, "-X", "utf8", "-I", bridge,
-        "selftest", "--runtime", runtime, "--device", "cpu",
-    ])
+    # The exact runtime that will be shipped must execute the original generator.
+    run([python_exe, "-X", "utf8", "-I", bridge, "selftest", "--runtime", runtime, "--device", "cpu"])
 
     marker = dict(expected_marker)
     marker["installedAt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -309,19 +263,18 @@ def build_runtime(runtime: Path, manifest_path: Path, bridge: Path, profile: str
         encoding="utf-8",
         newline="\n",
     )
-
-    # Downloads are not needed in the shipped artifact.
     shutil.rmtree(downloads, ignore_errors=True)
     if not runtime_is_complete(runtime):
         raise RuntimeError("Runtime chưa đầy đủ sau khi chuẩn bị")
-    log("Runtime LaMa gốc đã được chuẩn bị và self-test thành công.")
+    log("Runtime Windows đã nạp generator safetensors và self-test thành công.")
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Prepare a tested, portable original-LaMa runtime for ERASA VIDEO 2.")
+    parser = argparse.ArgumentParser(description="Prepare a tested Windows original-LaMa runtime from a generator export.")
     parser.add_argument("--runtime", required=True, type=Path)
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--bridge", required=True, type=Path)
+    parser.add_argument("--export", required=True, type=Path)
     parser.add_argument("--profile", choices=("cpu", "cuda"), default="cuda")
     parser.add_argument("--force", action="store_true")
     return parser.parse_args()
@@ -333,6 +286,7 @@ def main() -> int:
         args.runtime.resolve(),
         args.manifest.resolve(),
         args.bridge.resolve(),
+        args.export.resolve(),
         args.profile,
         args.force,
     )

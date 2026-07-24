@@ -33,17 +33,4 @@ public static class ToolPaths
         }
     }
 
-    public static string ManifestPath
-    {
-        get
-        {
-            var candidates = new[]
-            {
-                Path.Combine(BaseDirectory, "Runtime", "runtime-manifest.json"),
-                Path.Combine(BaseDirectory, "worker", "Runtime", "runtime-manifest.json")
-            };
-            return candidates.FirstOrDefault(File.Exists)
-                   ?? throw new FileNotFoundException("Không tìm thấy runtime-manifest.json.");
-        }
-    }
 }

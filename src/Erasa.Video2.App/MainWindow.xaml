@@ -26,7 +26,7 @@
                         <StackPanel Orientation="Horizontal" Spacing="10">
                             <TextBlock Text="ERASA VIDEO" FontSize="23" FontWeight="Bold" Foreground="{StaticResource ErasaInkBrush}" />
                             <Border Background="#FFFFE8D9" CornerRadius="5" Padding="7,2" VerticalAlignment="Center">
-                                <TextBlock Text="v1.2.0" Foreground="{StaticResource ErasaOrangeBrush}" FontSize="11" FontWeight="SemiBold" />
+                                <TextBlock Text="v1.3.0" Foreground="{StaticResource ErasaOrangeBrush}" FontSize="11" FontWeight="SemiBold" />
                             </Border>
                         </StackPanel>
                         <TextBlock Text="LaMa gốc • Temporal video • Mask do người dùng xác nhận" Foreground="{StaticResource ErasaMutedBrush}" FontSize="12" />

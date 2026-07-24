@@ -17,7 +17,7 @@ public sealed class WorkerCommandExecutor : IWorkerCommandExecutor
     public WorkerCommandExecutor(Action<WorkerMessage> emit)
     {
         _ffmpeg = new FfmpegService();
-        _runtime = new RuntimeInstaller(emit);
+        _runtime = new RuntimeInstaller();
         _bridge = new PythonBridgeService(emit);
         _pipeline = new VideoPipelineService(emit, _ffmpeg, _bridge);
     }
@@ -29,7 +29,6 @@ public sealed class WorkerCommandExecutor : IWorkerCommandExecutor
             WorkerCommands.Probe => await ProbeAsync(request, cancellationToken),
             WorkerCommands.Thumbnail => await ThumbnailAsync(request, cancellationToken),
             WorkerCommands.RuntimeStatus => RuntimeStatus(request),
-            WorkerCommands.RuntimeInstall => await RuntimeInstallAsync(request, cancellationToken),
             WorkerCommands.Suggest => await _pipeline.SuggestAsync(request, cancellationToken),
             WorkerCommands.Preview => await _pipeline.PreviewAsync(request, cancellationToken),
             WorkerCommands.Process => await _pipeline.ProcessAsync(request, cancellationToken),
@@ -61,12 +60,6 @@ public sealed class WorkerCommandExecutor : IWorkerCommandExecutor
         return new WorkerMessage { Kind = "completed", Message = status.Message, Runtime = status };
     }
 
-    private async Task<WorkerMessage> RuntimeInstallAsync(WorkerRequest request, CancellationToken cancellationToken)
-    {
-        var directory = RequirePath(request.RuntimeDirectory);
-        var status = await _runtime.InstallAsync(directory, request.Profile ?? "auto", cancellationToken);
-        return new WorkerMessage { Kind = "completed", Progress = 1, Message = status.Message, Runtime = status };
-    }
 
     private async Task<WorkerMessage> SelfTestUtilitiesAsync(WorkerRequest request, CancellationToken cancellationToken)
     {

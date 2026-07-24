@@ -38,12 +38,12 @@ def runtime_paths(runtime: str) -> tuple[Path, Path, Path]:
     root = Path(runtime).resolve()
     source = root / "lama-source"
     config = root / "model" / "config.yaml"
-    checkpoint = root / "model" / "models" / "best.ckpt"
+    generator_state = root / "model" / "generator.safetensors"
     if not (source / "saicinpainting" / "training" / "modules" / "ffc.py").exists():
         raise FileNotFoundError("Thiếu source advimman/lama đã ghim commit.")
-    if not config.exists() or not checkpoint.exists():
-        raise FileNotFoundError("Thiếu checkpoint Big-LaMa.")
-    return source, config, checkpoint
+    if not config.exists() or not generator_state.exists():
+        raise FileNotFoundError("Thiếu config hoặc generator.safetensors đã xuất từ Big-LaMa gốc.")
+    return source, config, generator_state
 
 
 def _get_shape(value):
@@ -98,7 +98,7 @@ def resolve_config(value, root: dict):
 
 class LamaModel:
     def __init__(self, runtime: str, requested_device: str):
-        source, config_path, checkpoint_path = runtime_paths(runtime)
+        source, config_path, state_path = runtime_paths(runtime)
         self.requested_device = requested_device
         self.device = choose_device(requested_device)
         emit("log", 0.01, f"Đang nạp source LaMa gốc trên {self.device.type.upper()}…")
@@ -107,18 +107,12 @@ class LamaModel:
         generator_config = resolve_config(config["generator"], config)
         generator_config.pop("kind", None)
         self.generator = generator_class(**generator_config)
-        checkpoint = torch.load(str(checkpoint_path), map_location="cpu")
-        state_dict = checkpoint.get("state_dict", checkpoint)
-        generator_state = {}
-        for key, value in state_dict.items():
-            if key.startswith("generator."):
-                generator_state[key[len("generator."):]] = value
-        if not generator_state:
-            generator_state = state_dict
-        missing, unexpected = self.generator.load_state_dict(generator_state, strict=False)
-        if len(missing) > 8 or len(unexpected) > 8:
+        from safetensors.torch import load_file
+        generator_state = load_file(str(state_path), device="cpu")
+        missing, unexpected = self.generator.load_state_dict(generator_state, strict=True)
+        if missing or unexpected:
             raise RuntimeError(
-                f"Checkpoint không khớp kiến trúc LaMa gốc (missing={len(missing)}, unexpected={len(unexpected)})."
+                f"Generator safetensors không khớp source LaMa gốc (missing={missing}, unexpected={unexpected})."
             )
         self.generator.eval()
         try:
@@ -132,7 +126,7 @@ class LamaModel:
                 raise
         for parameter in self.generator.parameters():
             parameter.requires_grad_(False)
-        emit("log", 0.03, "Đã nạp Big-LaMa từ checkpoint gốc.")
+        emit("log", 0.03, "Đã nạp generator Big-LaMa đã xuất an toàn từ checkpoint gốc.")
 
     def _run_generator(self, model_input: torch.Tensor) -> np.ndarray:
         with torch.no_grad():

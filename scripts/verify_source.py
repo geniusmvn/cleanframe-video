@@ -3,7 +3,6 @@ from __future__ import annotations
 import ast
 import json
 import re
-import sys
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -39,13 +38,14 @@ def main() -> int:
     result: dict[str, object] = {}
     required = [
         'Erasa.Video2.sln',
+        'Erasa.Video2.Core.sln',
         'src/Erasa.Video2.App/MainWindow.xaml',
         'src/Erasa.Video2.App/MainWindow.xaml.cs',
         'src/Erasa.Video2.App/Controls/MaskEditor.xaml.cs',
         'src/Erasa.Video2.Worker.Core/Services/WorkerCommandExecutor.cs',
         'src/Erasa.Video2.Worker.Core/Python/lama_bridge.py',
         'src/Erasa.Video2.Worker.Core/Runtime/runtime-manifest.json',
-        'tests/Erasa.Video2.Tests/MaskRasterizerTests.cs',
+        'scripts/export_lama_generator.py',
         'scripts/prepare_lama_runtime.py',
         '.github/workflows/build-windows.yml',
     ]
@@ -59,17 +59,21 @@ def main() -> int:
         ElementTree.parse(path)
     result['xml_files'] = len(xml_files)
 
-    with (ROOT / '.github/workflows/build-windows.yml').open(encoding='utf-8') as stream:
-        workflow = yaml.safe_load(stream)
-    if not isinstance(workflow, dict) or 'jobs' not in workflow:
+    workflow_path = ROOT / '.github/workflows/build-windows.yml'
+    with workflow_path.open(encoding='utf-8') as stream:
+        parsed_workflow = yaml.safe_load(stream)
+    if not isinstance(parsed_workflow, dict) or 'jobs' not in parsed_workflow:
         raise AssertionError('Workflow YAML is invalid.')
     result['workflow_yaml'] = True
 
-    bridge_path = ROOT / 'src/Erasa.Video2.Worker.Core/Python/lama_bridge.py'
-    runtime_builder_path = ROOT / 'scripts/prepare_lama_runtime.py'
-    ast.parse(bridge_path.read_text(encoding='utf-8'), filename=str(bridge_path))
-    ast.parse(runtime_builder_path.read_text(encoding='utf-8'), filename=str(runtime_builder_path))
-    result['python_ast'] = 2
+    python_files = [
+        ROOT / 'scripts/export_lama_generator.py',
+        ROOT / 'scripts/prepare_lama_runtime.py',
+        ROOT / 'src/Erasa.Video2.Worker.Core/Python/lama_bridge.py',
+    ]
+    for path in python_files:
+        ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
+    result['python_ast'] = len(python_files)
 
     csharp_files = sorted(ROOT.rglob('*.cs'))
     for path in csharp_files:
@@ -84,36 +88,100 @@ def main() -> int:
         raise AssertionError(f'Missing XAML handlers: {missing_handlers}')
     result['xaml_handlers'] = len(handler_names)
 
-    all_source = '\n'.join(path.read_text(encoding='utf-8-sig', errors='replace') for base in (ROOT / 'src', ROOT / 'tests') for path in base.rglob('*') if path.is_file() and path.suffix.lower() in {'.cs', '.py', '.xaml', '.json', '.props', '.csproj'})
+    all_source = '\n'.join(
+        path.read_text(encoding='utf-8-sig', errors='replace')
+        for base in (ROOT / 'src', ROOT / 'tests')
+        for path in base.rglob('*')
+        if path.is_file() and path.suffix.lower() in {'.cs', '.py', '.xaml', '.json', '.props', '.csproj'}
+    )
     banned = ['PySide6', 'PyInstaller', 'Avalonia', 'onnxruntime', 'simple-lama', 'lama-cleaner', 'delogo=']
     found = [token for token in banned if token.lower() in all_source.lower()]
     if found:
         raise AssertionError(f'Legacy or banned tokens found: {found}')
     result['banned_tokens'] = 'absent'
 
-    bridge = bridge_path.read_text(encoding='utf-8')
-    required_bridge_tokens = [
+    manifest = json.loads((ROOT / 'src/Erasa.Video2.Worker.Core/Runtime/runtime-manifest.json').read_text(encoding='utf-8'))
+    if manifest['version'] != '1.3.0':
+        raise AssertionError('Runtime manifest version is not 1.3.0.')
+    if manifest['upstream']['commit'] != '786f5936b27fb3dacd2b1ad799e4de968ea697e7':
+        raise AssertionError('Original LaMa commit is not pinned.')
+    serialized_manifest = json.dumps(manifest).lower()
+    for forbidden in ('pytorch-lightning', 'torchmetrics', 'tensorboard', 'future=='):
+        if forbidden in serialized_manifest:
+            raise AssertionError(f'Old checkpoint dependency leaked into Windows manifest: {forbidden}')
+    if 'safetensors==0.4.5' not in manifest['basePackages']:
+        raise AssertionError('safetensors is not pinned for Windows runtime.')
+    result['plain_generator_manifest'] = True
+
+    bridge = (ROOT / 'src/Erasa.Video2.Worker.Core/Python/lama_bridge.py').read_text(encoding='utf-8')
+    for token in (
         'from saicinpainting.training.modules.ffc import FFCResNetGenerator',
-        'generator_state[key[len("generator."):]]',
-        'torch.load(str(checkpoint_path)',
+        'from safetensors.torch import load_file',
+        'generator.safetensors',
         'cv2.calcOpticalFlowFarneback',
         'source_known',
         'current.astype(np.float32) * (1 - alpha)',
-    ]
-    for token in required_bridge_tokens:
+    ):
         if token not in bridge:
-            raise AssertionError(f'Missing original LaMa/temporal implementation token: {token}')
-    result['original_lama_wiring'] = True
+            raise AssertionError(f'Missing original LaMa/temporal token: {token}')
+    if 'torch.load(' in bridge or 'best.ckpt' in bridge or 'pytorch_lightning' in bridge:
+        raise AssertionError('Windows bridge still loads the raw Lightning checkpoint.')
+    result['original_source_plain_state_wiring'] = True
 
-    main_tokens = [
-        'ConfirmMask_Click',
-        'Preview_Click',
-        'ProcessQueueAsync',
-        'EnsureRuntimeAsync',
-        'keepPreview: true',
-        'JobStateMachine.CanPreview',
-    ]
-    for token in main_tokens:
+    exporter = (ROOT / 'scripts/export_lama_generator.py').read_text(encoding='utf-8')
+    for token in ('weights_only=True', 'get_unsafe_globals_in_checkpoint', 'save_file(canonical', 'validate_and_canonicalize', 'validated_forward_shape'):
+        if token not in exporter:
+            raise AssertionError(f'Exporter proof missing: {token}')
+    if 'pytorch_lightning' in exporter:
+        raise AssertionError('Exporter must not import the old Lightning stack.')
+    result['linux_checkpoint_exporter'] = True
+
+    builder = (ROOT / 'scripts/prepare_lama_runtime.py').read_text(encoding='utf-8')
+    for token in ('validate_export(export)', 'generator.safetensors', '--only-binary=:all:', 'selftest'):
+        if token not in builder:
+            raise AssertionError(f'Runtime builder missing: {token}')
+    if 'best.ckpt' in builder or 'pytorch_lightning' in builder or 'originalModel' in builder:
+        raise AssertionError('Windows runtime builder still handles the raw checkpoint.')
+    result['windows_runtime_without_lightning'] = True
+
+    workflow = workflow_path.read_text(encoding='utf-8')
+    for job in ('source-checks:', 'core-tests:', 'worker-windows:', 'lama-export-linux:', 'lama-runtime-windows:', 'winui-windows:'):
+        if job not in workflow:
+            raise AssertionError(f'Missing layered CI job: {job}')
+    for step in (
+        'Build and test Any CPU',
+        'Worker FFmpeg utility self-test',
+        'Export and validate original generator',
+        'Prepare Windows runtime from safetensors export',
+        'Original LaMa Worker.Core self-test',
+        'Original LaMa video integration test',
+        'Bundled runtime status test',
+        'WinUI startup smoke test',
+    ):
+        if step not in workflow:
+            raise AssertionError(f'Missing CI proof step: {step}')
+    if 'runtime-install' in workflow:
+        raise AssertionError('CI still installs runtime through worker.')
+    result['layered_ci_jobs'] = 6
+
+    test_project = (ROOT / 'tests/Erasa.Video2.Tests/Erasa.Video2.Tests.csproj').read_text(encoding='utf-8')
+    if 'Erasa.Video2.Worker.Core' not in test_project or 'Erasa.Video2.Worker.Host' in test_project:
+        raise AssertionError('Tests must reference Worker.Core only.')
+    host_files = sorted(path.name for path in (ROOT / 'src/Erasa.Video2.Worker.Host').glob('*.cs'))
+    if host_files != ['Program.cs']:
+        raise AssertionError(f'Worker host is not thin: {host_files}')
+    result['worker_host_is_thin'] = True
+
+    protocol = (ROOT / 'src/Erasa.Video2.Core/Protocol/WorkerProtocol.cs').read_text(encoding='utf-8')
+    executor = (ROOT / 'src/Erasa.Video2.Worker.Core/Services/WorkerCommandExecutor.cs').read_text(encoding='utf-8')
+    if 'RuntimeInstall' in protocol or 'WorkerCommands.RuntimeInstall' in executor or 'RuntimeInstallAsync' in executor or 'InstallAsync(' in executor:
+        raise AssertionError('Runtime installation command still exists in shipped worker.')
+    app_paths = (ROOT / 'src/Erasa.Video2.App/Services/AppPaths.cs').read_text(encoding='utf-8')
+    if 'LocalRuntimeDirectory' in app_paths or 'generator.safetensors' not in app_paths:
+        raise AssertionError('App may use a stale local runtime or does not require safetensors.')
+    result['bundled_runtime_only'] = True
+
+    for token in ('ConfirmMask_Click', 'Preview_Click', 'ProcessQueueAsync', 'EnsureRuntimeAsync', 'keepPreview: true', 'JobStateMachine.CanPreview'):
         if token not in code:
             raise AssertionError(f'Missing UI workflow token: {token}')
     if 'Environment.Exit' in code or 'FailFast' in code:
@@ -121,83 +189,10 @@ def main() -> int:
     result['ui_state_wiring'] = True
 
     mask_editor = (ROOT / 'src/Erasa.Video2.App/Controls/MaskEditor.xaml.cs').read_text(encoding='utf-8')
-    for tool in ['MaskTool.Brush', 'MaskTool.Eraser', 'MaskTool.Rectangle', 'MaskTool.Ellipse', 'MaskTool.Pan']:
+    for tool in ('MaskTool.Brush', 'MaskTool.Eraser', 'MaskTool.Rectangle', 'MaskTool.Ellipse', 'MaskTool.Pan'):
         if tool not in code and tool not in mask_editor:
             raise AssertionError(f'Missing mask tool: {tool}')
     result['mask_tools'] = 5
-
-    workflow_text = (ROOT / '.github/workflows/build-windows.yml').read_text(encoding='utf-8')
-    for step in ['Build and test Any CPU', 'Worker FFmpeg utility self-test', 'Prepare bundled original LaMa runtime', 'Original LaMa Worker.Core self-test', 'Original LaMa video integration test', 'Bundled runtime status test', 'WinUI startup smoke test']:
-        if step not in workflow_text:
-            raise AssertionError(f'Missing CI proof step: {step}')
-    result['ci_proof_steps'] = 7
-
-    manifest = json.loads((ROOT / 'src/Erasa.Video2.Worker.Core/Runtime/runtime-manifest.json').read_text(encoding='utf-8'))
-    if 'advimman/lama/archive/786f5936b27fb3dacd2b1ad799e4de968ea697e7.zip' not in manifest['lamaSource']['url']:
-        raise AssertionError('Original LaMa commit is not pinned.')
-    result['pinned_upstream_commit'] = '786f5936b27fb3dacd2b1ad799e4de968ea697e7'
-
-    required_lightning = {
-        'pytorch-lightning==1.2.9',
-        'torchmetrics==0.2.0',
-        'tensorboard==2.4.1',
-        'protobuf==3.20.3',
-    }
-    if not required_lightning.issubset(set(manifest.get('lightningPackages', []))):
-        raise AssertionError('Original LaMa checkpoint compatibility dependencies are not pinned.')
-    if manifest.get('futurePackage') != 'future==1.0.0':
-        raise AssertionError('A wheel-backed future package is not pinned.')
-    if any(item.startswith('future==') for item in manifest.get('lightningPackages', [])):
-        raise AssertionError('future must be installed separately from the Lightning stack.')
-    builder_source = runtime_builder_path.read_text(encoding='utf-8')
-    if builder_source.index('Runtime imports OK:') > builder_source.index('model_item = manifest["model"]'):
-        raise AssertionError('Runtime dependency probe must run before the large model download.')
-    if 'traceback.print_exc(file=sys.stderr)' not in (
-        ROOT / 'src/Erasa.Video2.Worker.Core/Python/lama_bridge.py'
-    ).read_text(encoding='utf-8'):
-        raise AssertionError('LaMa bridge does not emit a diagnostic traceback.')
-    result['original_lama_checkpoint_dependencies'] = True
-
-
-    # Architecture 1.1 guards: tests never reference the executable host and CI is layered.
-    test_project = (ROOT / "tests" / "Erasa.Video2.Tests" / "Erasa.Video2.Tests.csproj").read_text(encoding="utf-8")
-    assert "Erasa.Video2.Worker.Core" in test_project
-    assert "Erasa.Video2.Worker.Host" not in test_project
-    host_files = sorted(path.name for path in (ROOT / "src" / "Erasa.Video2.Worker.Host").glob("*.cs"))
-    assert host_files == ["Program.cs"], host_files
-    assert (ROOT / "src" / "Erasa.Video2.Worker.Core" / "Services" / "WorkerProcessHost.cs").exists()
-    workflow = (ROOT / ".github" / "workflows" / "build-windows.yml").read_text(encoding="utf-8")
-    for job in ("source-checks:", "core-tests:", "worker-windows:", "lama-cpu:", "winui-windows:"):
-        assert job in workflow, job
-    core_test_block = workflow.split("core-tests:", 1)[1].split("worker-windows:", 1)[0]
-    assert "-p:Platform=x64" not in core_test_block
-    assert "--no-build" not in core_test_block
-    assert "Build complete solution" not in workflow
-    assert "Console.Error.OutputEncoding" not in (ROOT / "src" / "Erasa.Video2.Worker.Host" / "Program.cs").read_text(encoding="utf-8")
-    result["layered_ci_jobs"] = 5
-    result["worker_host_is_thin"] = True
-
-    # Architecture 1.2 guards: runtime is prepared once in CI, tested, transferred as an artifact, and bundled.
-    runtime_builder = runtime_builder_path.read_text(encoding="utf-8")
-    for token in ("safe_extract_zip", "torchCuda", "selftest", "runtime.ready.json"):
-        if token not in runtime_builder:
-            raise AssertionError(f"Runtime builder missing token: {token}")
-    if "runtime-install" in workflow_text:
-        raise AssertionError("CI still invokes the unreliable runtime-install worker command.")
-    for token in (
-        "name: erasa-lama-runtime-windows-x64",
-        "name: erasa-lama-runtime-windows-x64",
-        "path: artifacts/runtime-test",
-        "path: artifacts/runtime",
-        "Copy-Item 'artifacts\\runtime\\*' 'artifacts\\app\\runtime'",
-    ):
-        if token not in workflow_text:
-            raise AssertionError(f"Bundled runtime artifact wiring missing: {token}")
-    if "WorkerCommands.RuntimeInstall" in code:
-        raise AssertionError("WinUI still attempts to install Python/model at runtime.")
-    if "ứng dụng không tự cài Python hoặc model" not in code:
-        raise AssertionError("Missing explicit bundled-runtime UI behavior.")
-    result["bundled_tested_runtime"] = True
 
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
